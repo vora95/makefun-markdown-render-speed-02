@@ -492,10 +492,15 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       out.push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
     const quoteLine = line => line.match(nestedContext ? /^ {0,6}>(?: ?)(.*)$/ : /^ {0,3}>(?: ?)(.*)$/);
+    // Expand only leading tabs in quote content, from the content's real
+    // starting column in the original line; tabs after the first
+    // non-whitespace character stay literal. A `>` directly followed by a
+    // tab donates that tab's first expanded space as the separator.
+    const expandQuoteTabs = (line, content) => { if (!content.includes('\t')) return content; const startCol=line.length-content.length; const beforeChar=line[startCol-1]; let col=startCol,expanded='',seenNonWs=false; for(const ch of content){if(ch==='\t'&&!seenNonWs){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{if(ch==='\t')expanded+='\t';else expanded+=ch;col++;if(ch!==' '&&ch!=='\t')seenNonWs=true;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); return expanded; };
     if ((m = quoteLine(blockLines[i]))) {
       const q = []; let quoteFence = false; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
-        if (content.includes('\t')) { const startCol=blockLines[i].length-content.length; const beforeChar=blockLines[i][startCol-1]; let col=startCol,expanded='',seenNonWs=false; for(const ch of content){if(ch==='\t'&&!seenNonWs){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{if(ch==='\t')expanded+='\t';else expanded+=ch;col++;if(ch!==' '&&ch!=='\t')seenNonWs=true;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); content=expanded; }
+        content=expandQuoteTabs(blockLines[i], content);
         if (content === ' ' && q.some(line=>line.trim())) content='\u0001';
         const fm = content.match(/^ {0,3}(`{3,}|~{3,})/);
         if (fm && !(fm[1][0] === '`' && content.slice(fm[0].length).includes('`'))) quoteFence = !quoteFence;
@@ -512,7 +517,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       let lastLazySetext = false;
       while(i<blockLines.length && !quoteFence && !blank(blockLines[i]) && q.length && (quoteLine(blockLines[i]) || (q.at(-1).trim() && (!interrupt(q.at(-1)) || lastLazySetext || /^ {0,3}\d{1,9}[.)][ \t]+>/.test(q.at(-1))) && !/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(q.at(-1))))) {
         const nextQuote=quoteLine(blockLines[i]);
-        if(nextQuote){q.push(nextQuote[1]);i++;prevLazy=false;lastLazySetext=false;continue;}
+        if(nextQuote){q.push(expandQuoteTabs(blockLines[i], nextQuote[1]));i++;prevLazy=false;lastLazySetext=false;continue;}
         const rawLazy = blockLines[i];
         // A lazy line that starts a block at 0-3 indent ends the quote.
         // An indented lazy line (4+ spaces) is paragraph text with
