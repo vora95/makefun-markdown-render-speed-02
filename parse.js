@@ -124,9 +124,46 @@ function renderBlocks(markdown, refs = Object.create(null)) {
       out.push(`<blockquote>\n${renderBlocks(q.join('\n'), refs)}</blockquote>\n`); continue;
     }
     if ((m = lines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/))) {
-      const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul', items = [];
-      while (i < lines.length && (m = lines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/)) && /^\d/.test(m[1]) === ordered) { items.push(m[2]); i++; }
-      out.push(`<${tag}>\n${items.map(x => { const task = x.match(/^\[([ xX])\][ \t]+(.*)$/); return `<li>${task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ${inline(task[2], refs)}` : inline(x, refs)}</li>\n`; }).join('')}</${tag}>\n`); continue;
+      const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
+      const marker = m[1], markerIndent = lines[i].match(/^ */)[0].length;
+      const markerWidth = marker.length + (lines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0].length || 1);
+      const contentIndent = markerIndent + Math.min(markerWidth, 4);
+      const startNumber = ordered ? Number.parseInt(marker, 10) : 1;
+      const items = []; let loose = false;
+      while (i < lines.length) {
+        const itemMatch = lines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/);
+        if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered || (ordered && itemMatch[1].slice(-1) !== marker.slice(-1))) break;
+        const itemIndent = lines[i].match(/^ */)[0].length;
+        const width = itemMatch[1].length + (lines[i].slice(itemIndent + itemMatch[1].length).match(/^[ \t]+/)?.[0].length || 1);
+        const indent = itemIndent + Math.min(width, 4);
+        const body = [itemMatch[2]]; i++;
+        while (i < lines.length) {
+          const next = lines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+/);
+          if (next && /^\d/.test(next[1]) === ordered && (!ordered || next[1].slice(-1) === marker.slice(-1))) break;
+          if (blank(lines[i])) {
+            let k = i; while (k < lines.length && blank(lines[k])) k++;
+            if (k >= lines.length) { i = k; break; }
+            if (lines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+/) || lines[k].match(/^ {0,3}>/)) { body.push(''); i++; loose = true; continue; }
+            if (lines[k].match(/^ */)[0].length >= indent) { body.push(''); i++; loose = true; continue; }
+            break;
+          }
+          const lead = lines[i].match(/^ */)[0].length;
+          if (lead >= indent) body.push(lines[i].slice(indent));
+          else if (/^ {0,3}(?:>|#{1,6}[ \t]|```|~~~)/.test(lines[i])) body.push(lines[i].replace(/^ {0,3}/, ''));
+          else break;
+          i++;
+        }
+        items.push(body);
+      }
+      const htmlItems = items.map(linesInItem => {
+        const task = linesInItem[0]?.match(/^\[([ xX])\][ \t]+(.*)$/);
+        if (task) linesInItem[0] = task[2];
+        const rendered = renderBlocks(linesInItem.join('\n'), refs).replace(/\n$/, '');
+        const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
+        if (!loose && /^<p>[\s\S]*<\/p>$/.test(rendered)) return `<li>${checkbox}${rendered.slice(3, -4)}</li>\n`;
+        return `<li>${checkbox}${rendered ? '\n' + rendered + '\n' : ''}</li>\n`;
+      }).join('');
+      out.push(`<${tag}${ordered && startNumber !== 1 ? ` start="${startNumber}"` : ''}>\n${htmlItems}</${tag}>\n`); continue;
     }
     if (i + 1 < lines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(lines[i + 1])) { const d = lines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(lines[i].trim(), refs)}</h${d}>\n`); i += 2; continue; }
     let j = i + 1;
