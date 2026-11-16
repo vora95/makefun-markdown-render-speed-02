@@ -342,6 +342,9 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       const mark = '~'.repeat(n); let end = -1, depth = 1, cursor = i + n;
       while (cursor < source.length) {
         cursor = source.indexOf('~', cursor); if (cursor < 0) break;
+        // Skip a tilde escaped by an odd run of backslashes (literal, not a delimiter).
+        let bs = 0; for (let b = cursor - 1; b >= 0 && source[b] === '\\'; b--) bs++;
+        if (bs % 2 === 1) { cursor += 1; continue; }
         let run = 1; while (source[cursor + run] === '~') run++;
         if (tagSpans.some(([s, e]) => cursor >= s && cursor < e)) { cursor += run; continue; }
         if (run === n) {
@@ -356,6 +359,9 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         out += `<del>${inline(source.slice(i + n, end), linkDefinitions)}</del>`;
         i = end + n; continue;
       }
+      // No closer: the whole run is literal text (a failed ~~ opener is
+      // not retried as a single ~).
+      out += '~'.repeat(n); i += n; continue;
     }
 
     if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/)[^ <>]+$/i.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (validInlineTag(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { if (/^<a(?:[\s/>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = true; else if (/^<\/a(?:[\s>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = false; out += raw; i = e + 1; continue; } } }
