@@ -444,11 +444,17 @@ const isFenceStart = line => {
   return !(m[1][0] === '`' && m[2].includes('`'));
 };
 
-function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false, defsOnly = false) {
+function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false, defsOnly = false, stripTopPara = false, lastKind = null) {
   const src = markdown.replace(/\r\n?/g, '\n');
   const rawLines = src.split('\n');
   const blockLines = rawLines.map(line => { let col = 0, n = 0; while (n < line.length && (line[n] === ' ' || line[n] === '\t')) { if (line[n] === '\t') { const step = 4 - col % 4; line = line.slice(0, n) + ' '.repeat(step) + line.slice(n + 1); col += step; n += step; } else { col++; n++; } } return line; });
   const out = [];
+  // Records the kind of the last top-level block pushed, so a caller (the
+  // list renderer) can tell a structural block (which marked renders with
+  // a trailing newline) from a paragraph or raw HTML block (which it
+  // renders without one) — the rendered strings alone are ambiguous,
+  // e.g. a raw <h1> line vs a real # heading.
+  const push = (s, kind) => { if (lastKind) lastKind.kind = kind; out.push(s); };
   // Definitions-only pass: collect link definitions without rendering any
   // inline content or building output strings. The render pass is
   // untouched; a nested quote/list item is only re-parsed when its text
@@ -483,7 +489,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const row = (cells, tag) => `<tr>\n${heads.map((_, n) => { const a = aligns[n]; return `<${tag}${a ? ` align="${a}"` : ''}>${IL(cells[n] || '', linkDefinitions)}</${tag}>\n`; }).join('')}</tr>\n`;
       let html = '<table>\n<thead>\n' + row(heads, 'th') + '</thead>\n'; i += 2;
       if (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t'))) { html += '<tbody>'; while (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t')) && !/^ {0,3}(?:>|#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[i]) && !isFenceStart(blockLines[i]) && !(htmlBlockOf(blockLines[i])?.type <= 6)) html += row(split(blockLines[i++]), 'td'); html += '</tbody>'; }
-      out.push(html + '</table>\n'); continue;
+      push(html + '</table>\n', 'table'); continue;
     }
     // Block HTML is passed through verbatim by marked; its contents are not parsed.
     const htmlKind = htmlBlockOf(blockLines[i]);
@@ -509,7 +515,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       // The source's final separator belongs to the block only when it was
       // followed immediately by content or the source ended there.
       if (stopReason === 'blank' && raw.endsWith('\n')) raw = raw.slice(0, -1);
-      if (!defsOnly) out.push(raw); continue;
+      if (!defsOnly) push(raw, 'html'); continue;
     }
     // Indented code blocks are recognized before other block constructs.
     const nestedFenceCandidate = nestedContext && /^ {4,20}(?:`{3,}|~{3,})/.test(blockLines[i]);
@@ -527,10 +533,10 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         } else break;
       }
       while (code.length && code[code.length - 1] === '') code.pop();
-      if (!defsOnly) out.push(`<pre><code>${escapeHtml(code.join('\n'))}${code.length ? '\n' : ''}</code></pre>\n`); continue;
+      if (!defsOnly) push(`<pre><code>${escapeHtml(code.join('\n'))}${code.length ? '\n' : ''}</code></pre>\n`, 'fence'); continue;
     }
-    if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); if (/^ {0,3}#{1,6}[ \t]+#+[ \t]*$/.test(blockLines[i])) body = ''; else body = body.replace(/[ \t]+#+[ \t]*$/, ''); out.push(`<h${d}>${IL(body, linkDefinitions)}</h${d}>\n`); i++; continue; }
-    if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { out.push('<hr>\n'); i++; continue; }
+    if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); if (/^ {0,3}#{1,6}[ \t]+#+[ \t]*$/.test(blockLines[i])) body = ''; else body = body.replace(/[ \t]+#+[ \t]*$/, ''); push(`<h${d}>${IL(body, linkDefinitions)}</h${d}>\n`, 'heading'); i++; continue; }
+    if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { push('<hr>\n', 'hr'); i++; continue; }
     if ((m = blockLines[i].match(nestedContext ? /^( {0,20})(`{3,}|~{3,})/ : /^( {0,3})(`{3,}|~{3,})/)) && !(m[2][0] === '`' && blockLines[i].slice(m[0].length).includes('`'))) {
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
       const closeFence = new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
@@ -538,7 +544,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const dedentFenceLine = (line) => { let k = 0; while (k < indent && k < line.length && (line[k] === ' ' || line[k] === '\t')) k++; return line.slice(k); };
       const body = rawLines.slice(i + 1, j).map(line => fence[0] === '~' ? line : dedentFenceLine(line)).join('\n');
       const language = lang.replace(/\\([\p{P}\p{S}])/gu, '$1');
-      if (!defsOnly) out.push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
+      if (!defsOnly) push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`, 'fence'); i = Math.min(j + 1, blockLines.length); continue;
     }
     const quoteLine = line => line.match(nestedContext ? /^ {0,6}>(?: ?)(.*)$/ : /^ {0,3}>(?: ?)(.*)$/);
     // Expand only leading tabs in quote content, from the content's real
@@ -612,7 +618,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         const qText = q.join('\n');
         if (hasDefLine(qText)) renderBlockTree(qText, linkDefinitions, true, collectDefinitions, defsOnly);
       } else {
-        out.push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\u0001/g,' ').replace(/\u0003/g,'')}</blockquote>\n`);
+        push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\u0001/g,' ').replace(/\u0003/g,'')}</blockquote>\n`, 'blockquote');
       }
       continue;
     }
@@ -737,25 +743,28 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       htmlItems = listItems.map(linesInItem => {
         const task = linesInItem[0]?.match(/^\[([ xX])\][ \t]+(.*)$/);
         if (task) linesInItem[0] = task[2];
-        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\n$/, '');
+        const lk = { kind: '' };
+        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, true, collectDefinitions, false, !hasLooseItems, lk).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
-        if (!hasLooseItems && /^(?:<blockquote>|<ul>|<ol>)/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
-        if (!hasLooseItems && /^<h[1-6]>[\s\S]*<\/h[1-6]>$/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
-        if (!hasLooseItems && /^<h[1-6]>[\s\S]*<\/h[1-6]>\n<p>[\s\S]*<\/p>$/.test(rendered)) { const close = rendered.indexOf('</h'); const after = rendered.indexOf('\n<p>', close) + 4; return `<li>${checkbox}${rendered.slice(0, close + 5)}\n${rendered.slice(after, -4)}</li>\n`; }
-        if (!hasLooseItems && rendered === '<hr>') return `<li>${checkbox}<hr>\n</li>\n`;
-        if (!hasLooseItems && rendered.startsWith('<pre>')) return `<li>${checkbox}${rendered}\n</li>\n`;
-        if (!hasLooseItems && rendered.startsWith('<p>') && rendered.endsWith('</p>') && rendered.includes('</p>\n<p>')) { const inner = rendered.slice(3, -4).replace(/<\/p>\n<p>/g, '\n\n'); return `<li>${checkbox}${inner}</li>\n`; }
-        if (!hasLooseItems && /^<p>[\s\S]*<\/p>$/.test(rendered)) return `<li>${checkbox}${rendered.slice(3, -4)}</li>\n`;
-        if (!hasLooseItems && /^<\/?[A-Za-z!]/.test(rendered) && !/\n<\/?(?:p|ul|ol|blockquote|pre|h[1-6]|table|hr)/.test(rendered)) return `<li>${checkbox}${rendered}</li>\n`;
-        if (!hasLooseItems && rendered.startsWith('<p>')) { const close = rendered.indexOf('</p>'); if (close >= 0) return `<li>${checkbox}${rendered.slice(3, close)}${rendered.slice(close + 5)}\n</li>\n`; }
-        if (rendered.startsWith('<pre>')) return `<li>${checkbox}${rendered}\n</li>\n`;
-        if (hasLooseItems && rendered.startsWith('<p>')) return `<li><p>${checkbox}${rendered.slice(3)}\n</li>\n`;
-        if (hasLooseItems && /^<\/?[A-Za-z!]/.test(rendered) && !/\n<\/?(?:p|ul|ol|blockquote|pre|h[1-6]|table|hr)/.test(rendered)) return rendered.includes('<p>') ? `<li>${checkbox}${rendered}\n</li>\n` : `<li>${checkbox}${rendered}</li>\n`;
+        // Tight list items render as marked does: the item's block tokens
+        // concatenated directly — a paragraph token contributes its inline
+        // text with no <p> wrapper and no trailing newline (stripTopPara
+        // above), an HTML token its raw text, and a structural block
+        // (fence/heading/blockquote/nested list/table/hr) its rendering
+        // with a trailing newline. So the </li> newline exists exactly
+        // when the last block is structural. A loose item differs only
+        // in that a trailing paragraph also keeps its newline.
+        const structural = /^(?:fence|heading|blockquote|list|table|hr)$/.test(lk.kind);
+        if (!hasLooseItems) return structural ? `<li>${checkbox}${rendered}\n</li>\n` : `<li>${checkbox}${rendered}</li>\n`;
+        const looseNl = structural || lk.kind === 'para';
+        if (rendered.startsWith('<pre>')) return looseNl ? `<li>${checkbox}${rendered}\n</li>\n` : `<li>${checkbox}${rendered}</li>\n`;
+        if (rendered.startsWith('<p>')) return looseNl ? `<li><p>${checkbox}${rendered.slice(3)}\n</li>\n` : `<li><p>${checkbox}${rendered.slice(3)}</li>\n`;
+        if (/^<\/?[A-Za-z!]/.test(rendered) && !/\n<\/?(?:p|ul|ol|blockquote|pre|h[1-6]|table|hr)/.test(rendered)) return looseNl ? `<li>${checkbox}${rendered}\n</li>\n` : `<li>${checkbox}${rendered}</li>\n`;
         return `<li>${checkbox}${rendered ? '\n' + rendered + '\n' : ''}</li>\n`;
       }).join('');
       }
       if (!hasLooseItems) htmlItems = htmlItems.replace(/<li>\n(?=<(?:blockquote|ul|ol)>)/g, '<li>');
-      out.push(`<${tag}${ordered && startNumber !== 1 ? ` start="${startNumber}"` : ''}>\n${htmlItems}</${tag}>\n`); continue;
+      push(`<${tag}${ordered && startNumber !== 1 ? ` start="${startNumber}"` : ''}>\n${htmlItems}</${tag}>\n`, 'list'); continue;
     }
     const definitionStart = blockLines[i].match(/^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(.*)$/);
     if (definitionStart && definitionStart[1].trim() && !/(^|[^\\])\[/.test(definitionStart[1])) {
@@ -777,12 +786,12 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         i += consumedLines; continue;
       }
     }
-    if (i + 1 < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[i + 1])) { const d = blockLines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${IL(blockLines[i].trim(), linkDefinitions)}</h${d}>\n`); i += 2; continue; }
+    if (i + 1 < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[i + 1])) { const d = blockLines[i + 1].trim()[0] === '=' ? 1 : 2; push(`<h${d}>${IL(blockLines[i].trim(), linkDefinitions)}</h${d}>\n`, 'heading'); i += 2; continue; }
     let j = i + 1;
     const paragraphListMarker = nestedContext ? '(?:[-+*]|\\d{1,9}[.)])' : '(?:[-+*]|1[.)])';
     const paragraphInterrupt = new RegExp('^ {0,3}(?:#{1,6}(?:\\s|$)|>|' + paragraphListMarker + '[ \\t])');
     while (j < blockLines.length && !blank(blockLines[j]) && !/^ {0,3}(?:=+|-+)[ \t]*$/.test(blockLines[j]) && !(htmlBlockOf(blockLines[j])?.type <= 6) && !paragraphInterrupt.test(blockLines[j]) && !isFenceStart(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
-    if (j < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[j])) { const d=blockLines[j].trim()[0]==='='?1:2; out.push(`<h${d}>${IL(blockLines.slice(i,j).join('\n').trim(),linkDefinitions)}</h${d}>\n`); i=j+1; continue; }
+    if (j < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[j])) { const d=blockLines[j].trim()[0]==='='?1:2; push(`<h${d}>${IL(blockLines.slice(i,j).join('\n').trim(),linkDefinitions)}</h${d}>\n`, 'heading'); i=j+1; continue; }
     let paragraph = blockLines.slice(i, j).join('\n');
     const definitionPattern = /^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(?:<([^>\n]*)>|(?!<)(\S+))(?:(?:[ \t]+|\n[ \t]*)(?:"((?:(?!\n[ \t]*\n)[\s\S])*?)"|'((?:(?!\n[ \t]*\n)[\s\S])*?)'|\((.*)\)))?[ \t]*(?:\n|$)/;
     while (paragraph) {
@@ -795,7 +804,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       if (!linkDefinitions[key]) linkDefinitions[key] = { href: cleanDestination(angled ?? plain), title: (dq ?? sq ?? paren ?? '').replace(/\\([\p{P}\p{S}])/gu, '$1') };
       paragraph = paragraph.slice(definition[0].length).replace(/^\n/, '');
     }
-    if (paragraph) out.push(`<p>${IL(paragraph, linkDefinitions)}</p>\n`);
+    if (paragraph) push(stripTopPara ? IL(paragraph, linkDefinitions) : `<p>${IL(paragraph, linkDefinitions)}</p>\n`, 'para');
     i = j;
   }
   if (defsOnly) return '';
