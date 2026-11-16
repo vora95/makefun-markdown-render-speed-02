@@ -11,7 +11,15 @@ const escapeAttribute = s => escapeHtml(s).replace(/&amp;(#(?:\d+|[xX][\da-fA-F]
 const cleanDestination = s => s.replace(/\\([\p{P}\p{S}])/gu, '$1').replace(/\\/g, '%5C').replace(/[^\x00-\x7F]/gu, ch => encodeURIComponent(ch));
 const angleDestination = s => s.replace(/\\/g, '%5C').replace(/[\[\]]/g, c => c === '[' ? '%5B' : '%5D');
 
-// A raw HTML tag is valid only when its attributes follow the CommonMark
+// Sticky (lastIndex-anchored) autolink scan: identical to matching the old
+// ^-anchored pattern against source.slice(i), but without allocating a
+// tail substring at every cursor position. The ^ is dropped because the
+// sticky flag already anchors the match at lastIndex.
+const autolinkRe = /(?:(?:https?|ftp):\/\/[^\s<>]+|www\.[^\s<>]+|[A-Za-z][A-Za-z0-9+.-]{1,31}:(?=[A-Za-z0-9])(?=[^\s<>]*(?:@|\.))[^\s<>/]+(?:\/[^\s<>/]*)?|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*[A-Za-z0-9])+)/iy;
+// First character of any autolink alternative (scheme letter, www, or an
+// email local-part character). Positions starting with anything else can
+// never match, so the regex is not even attempted there.
+const autolinkStart = /[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]/;
 // attribute syntax: names of [A-Za-z_:][A-Za-z0-9_.:-]*, optionally
 // =value (quoted, or unquoted without whitespace or " ' = < > `). A tag
 // like <foo *bar* baz> or <foo https://x.com> is not a tag at all, so the
@@ -200,9 +208,14 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   const isWhitespace = c => !!c && /\s/u.test(c);
   const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };
   let out = '';
+  // Literal text accumulates in `lit` and is escaped once per run instead
+  // of one escapeHtml() call per character. Every branch that emits markup
+  // flushes first so output order is preserved.
+  let lit = '';
+  const flush = () => { if (lit) { out += escapeHtml(lit); lit = ''; } };
   for (let i = 0; i < source.length;) {
-    if (events.has(i)) out += events.get(i).join('');
-    if ((source[i] === '*' || source[i] === '_') && !consumed.has(i)) { out += source[i]; i++; continue; }
+    if (events.has(i)) { flush(); out += events.get(i).join(''); }
+    if ((source[i] === '*' || source[i] === '_') && !consumed.has(i)) { lit += source[i]; i++; continue; }
     if ((source[i] === '*' || source[i] === '_') && consumed.has(i)) { i++; continue; }
     const c = source[i];
     // GFM recognizes URL and email forms in ordinary text. Keep the scan
@@ -210,9 +223,9 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
     // available to the normal inline scanner. Bare-URL and email autolinks
     // are suppressed inside link text and while a raw <a> tag has left the
     // lexer in "inside a link" state; angle autolinks are not suppressed.
-    if (c !== '<' && !disableAutolinks && !linkDefinitions[IN_LINK]) {
-      const tail = source.slice(i);
-      const candidate = tail.match(/^(?:(?:https?|ftp):\/\/[^\s<>]+|www\.[^\s<>]+|[A-Za-z][A-Za-z0-9+.-]{1,31}:(?=[A-Za-z0-9])(?=[^\s<>]*(?:@|\.))[^\s<>/]+(?:\/[^\s<>/]*)?|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*[A-Za-z0-9])+)/i);
+    if (c !== '<' && !disableAutolinks && !linkDefinitions[IN_LINK] && autolinkStart.test(c)) {
+      autolinkRe.lastIndex = i;
+      const candidate = autolinkRe.exec(source);
       if (candidate) {
         let value = candidate[0];
         if (/^www\./i.test(value) && !/^www\./.test(value)) value = '';
@@ -224,7 +237,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         // outright, unless that character is a consumed emphasis closer
         // (marked's emphasis pass consumes a closing _ before the
         // autolink is seen, so the email still counts).
-        const afterEmail = tail[value.length];
+        const afterEmail = source[i + value.length];
         if ((afterEmail === '_' || afterEmail === '-') && value.includes('@') && !/^(?:https?|ftp):\/\//i.test(value) && !/^www\./i.test(value) && !/^[A-Za-z][A-Za-z0-9+.-]{1,31}:/i.test(value)) {
           const closerMark = marks.find(m => m.start === i + value.length && m.ch === '_' && m.usedClose > 0);
           if (afterEmail !== '_' || !closerMark) value = '';
@@ -259,18 +272,18 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         if (value) {
           const email = value.includes('@') && !/^[A-Za-z][A-Za-z0-9+.-]*:/i.test(value);
           const href = (email ? 'mailto:' + value : /^www\./i.test(value) ? 'http://' + value : value).replace(/\\/g, '%5C').replace(/\]/g, '%5D');
-          out += `<a href="${escapeHtml(href)}">${escapeHtml(value)}</a>`;
+          flush(); out += `<a href="${escapeHtml(href)}">${escapeHtml(value)}</a>`;
           i += value.length; continue;
         }
-        if (/^mailto:/i.test(candidate[0])) { out += escapeHtml(candidate[0]); i += candidate[0].length; continue; }
+        if (/^mailto:/i.test(candidate[0])) { flush(); out += escapeHtml(candidate[0]); i += candidate[0].length; continue; }
       }
     }
     // Code spans take precedence over bracket syntax and escape handling.
     if (c === '`') {
       let n = 1; while (source[i + n] === '`') n++;
       const end = matchingTickEnd(source, i + n, n);
-      if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
-      out += '`'.repeat(n); i += n; continue;
+      if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); flush(); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
+      lit += '`'.repeat(n); i += n; continue;
     }
     // Inline links and images, including the common reference forms.
     if (c === '!' && source[i + 1] === '[' || c === '[') {
@@ -342,21 +355,21 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           const normalizedRef = ref.replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
           const got = linkDefinitions[normalizedRef]; if (got) { dest = got.href; title = got.title || ''; }
         }
-        if (dest !== null && !nestedLink) { const savedInLink = linkDefinitions[IN_LINK]; const altSource = label.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); const alt = inline(altSource, linkDefinitions, true).replace(/<[^>]*>/g, ''); const labelHtml = image ? '' : inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
+        if (dest !== null && !nestedLink) { const savedInLink = linkDefinitions[IN_LINK]; const altSource = label.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); const alt = inline(altSource, linkDefinitions, true).replace(/<[^>]*>/g, ''); const labelHtml = image ? '' : inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); flush(); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
       if (dest === null && source[end] === '(') { const ref = label.replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); const fallback = linkDefinitions[ref]; if (fallback) { dest = fallback.href; title = fallback.title || ''; end = close + 1; } }
-      if (dest !== null && !nestedLink) { const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); const savedInLink = linkDefinitions[IN_LINK]; const labelHtml = inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; out += `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
+      if (dest !== null && !nestedLink) { const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); const savedInLink = linkDefinitions[IN_LINK]; const labelHtml = inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; flush(); out += `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
       }
     }
     if (c === '\\' && i + 1 < source.length) {
-      if (source[i + 1] === '\n' && i + 2 < source.length) { out += '<br>'; i += 2; while (source[i] === ' ') i++; continue; }
-      if (/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(source[i + 1])) { out += escapeHtml(source[i + 1]); i += 2; continue; }
+      if (source[i + 1] === '\n' && i + 2 < source.length) { flush(); out += '<br>'; i += 2; while (source[i] === ' ') i++; continue; }
+      if (/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(source[i + 1])) { lit += source[i + 1]; i += 2; continue; }
     }
     if (c === '~') {
       let n = 1; while (source[i + n] === '~') n++;
-      if (n > 2) { out += '~'.repeat(n); i += n; continue; }
+      if (n > 2) { lit += '~'.repeat(n); i += n; continue; }
       // A tilde inside a <...> span is literal text, matching the
       // emphasis pre-pass which skips those spans for * and _.
-      if (tagSpans.some(([s, e]) => i >= s && i < e)) { out += '~'.repeat(n); i += n; continue; }
+      if (tagSpans.some(([s, e]) => i >= s && i < e)) { lit += '~'.repeat(n); i += n; continue; }
       const mark = '~'.repeat(n); let end = -1, depth = 1, cursor = i + n;
       while (cursor < source.length) {
         cursor = source.indexOf('~', cursor); if (cursor < 0) break;
@@ -374,24 +387,26 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         cursor += run;
       }
       if (end >= 0) {
-        out += `<del>${inline(source.slice(i + n, end), linkDefinitions, disableAutolinks)}</del>`;
+        flush(); out += `<del>${inline(source.slice(i + n, end), linkDefinitions, disableAutolinks)}</del>`;
         i = end + n; continue;
       }
       // No closer: the whole run is literal text (a failed ~~ opener is
       // not retried as a single ~).
-      out += '~'.repeat(n); i += n; continue;
+      lit += '~'.repeat(n); i += n; continue;
     }
 
-    if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/)[^ <>]+$/i.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (validInlineTag(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { if (/^<a(?:[\s/>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = true; else if (/^<\/a(?:[\s>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = false; out += raw; i = e + 1; continue; } } }
-    if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]*);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += escapeHtml(!cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp)); } else out += m[0]; i += m[0].length; continue; } }
+    if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { flush(); out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { flush(); out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { flush(); out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/)[^ <>]+$/i.test(inner)) { flush(); out += `<a href="${escapeHtml(angleDestination(inner))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { flush(); out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (validInlineTag(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { if (/^<a(?:[\s/>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = true; else if (/^<\/a(?:[\s>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = false; flush(); out += raw; i = e + 1; continue; } } }
+    if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]*);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); flush(); out += escapeHtml(!cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp)); } else { flush(); out += m[0]; } i += m[0].length; continue; } }
     if (c === '\n') {
+      flush();
       let spaces = 0; for (let p = out.length - 1; p >= 0 && out[p] === ' '; p--) spaces++;
       if (spaces >= 2 && i + 1 < source.length) { out = out.slice(0, -spaces); out += '<br>'; while (source[i + 1] === ' ') i++; }
       else out += '\n';
       i++; continue;
     }
-    out += escapeHtml(c); i++;
+    lit += c; i++;
   }
+  flush();
   if (events.has(source.length)) out += events.get(source.length).join('');
   return out;
 }
