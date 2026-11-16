@@ -436,7 +436,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         while (i < blockLines.length && !realBlank(i)) i++;
         stopReason = i < blockLines.length ? 'blank' : 'eof';
       }
-      const pieces = blockLines.slice(start, i);
+      const pieces = rawLines.slice(start, i);
       let raw = pieces.join('\n');
       if (pieces.length && pieces[pieces.length - 1] !== '' && (i < blockLines.length || src.endsWith('\n'))) raw += '\n';
       // The source's final separator belongs to the block only when it was
