@@ -1,9 +1,12 @@
 // Small, dependency-free Markdown renderer. Parsing is performed afresh for each call.
 const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const escapeAttribute = s => escapeHtml(s).replace(/&amp;(#(?:\d+|[xX][\da-fA-F]+)|[A-Za-z][A-Za-z0-9]*);/g, '&$1;');
+const cleanDestination = s => s.replace(/\\([\p{P}\p{S}])/gu, '$1').replace(/\\/g, '%5C').replace(/[^\x00-\x7F]/gu, ch => encodeURIComponent(ch));
+const angleDestination = s => s.replace(/\\/g, '%5C');
 
 function inline(source, linkDefinitions = Object.create(null)) {
   // Text without inline delimiters can bypass the token scanner entirely.
-  if (!/[*_`\[\]\\!~<&]|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
+  if (!/[*_`\[\]\\!~<&]| {2,}\n|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
   const isPunctuation = c => !!c && /[\p{P}\p{S}]/u.test(c);
   const isWhitespace = c => !!c && /\s/u.test(c);
   const matchingTickEnd = (s, from, count) => {
@@ -136,12 +139,14 @@ function inline(source, linkDefinitions = Object.create(null)) {
       let n = 1; while (source[i + n] === '`') n++;
       const end = matchingTickEnd(source, i + n, n);
       if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
+      out += '`'.repeat(n); i += n; continue;
     }
     // Inline links and images, including the common reference forms.
     if (c === '!' && source[i + 1] === '[' || c === '[') {
       const image = c === '!'; const start = i + (image ? 2 : 1);
       let close = start, depth = 0;
       for (; close < source.length; close++) {
+        if (source[close] === '\\') { close++; continue; }
         if (source[close] === '`') {
           let ticks = 1; while (source[close + ticks] === '`') ticks++;
           const codeEnd = matchingTickEnd(source, close + ticks, ticks);
@@ -155,21 +160,22 @@ function inline(source, linkDefinitions = Object.create(null)) {
         // Markdown forbids an anchor from containing another anchor. If a
         // completed link occurs in this label, leave this opening bracket as
         // text so the inner construct can be rendered on its own.
-        const nestedLink = !image && /!?\[[^\]]*\]\([^\n)]*\)/.test(label);
+        const nestedLink = !image && /(?<!!)\[[^\]]*\]\([^\n)]*\)/.test(label);
         if (source[end] === '(') {
           let p = end + 1; while (source[p] === ' ') p++;
           let raw = '', quoted = false, q = '';
-          if (source[p] === '<') { const z = source.indexOf('>', p + 1), lineEnd = source.indexOf('\n', p + 1); if (z >= 0 && (lineEnd < 0 || z < lineEnd)) { raw = source.slice(p + 1, z); p = z + 1; } }
-          else { const b = p; let par = 0; while (p < source.length && (par || !/[\s)]/.test(source[p]))) { if (source[p] === '(') par++; if (source[p] === ')') par--; p++; } raw = source.slice(b, p); }
+          if (source[p] === '<') { const z = source.indexOf('>', p + 1), lineEnd = source.indexOf('\n', p + 1); if (z >= 0 && source[z - 1] !== '\\' && (lineEnd < 0 || z < lineEnd)) { raw = source.slice(p + 1, z); p = z + 1; } }
+          else { const b = p; let par = 0; while (p < source.length && (par || !/[\s)]/.test(source[p]))) { if (source[p] === '\\') { p += Math.min(2, source.length - p); continue; } if (source[p] === '(') par++; if (source[p] === ')') par--; p++; } raw = source.slice(b, p); }
           while (source[p] === ' ') p++;
           if (/['"(]/.test(source[p])) { q = source[p] === '(' ? ')' : source[p]; p++; const z = source.indexOf(q, p); if (z >= 0) { title = source.slice(p, z); p = z + 1; while (source[p] === ' ') p++; } }
-          if (source[p] === ')') { dest = raw.replace(/\\([\\()])/g, '$1'); end = p + 1; }
+        if (source[p] === ')') { dest = cleanDestination(raw); end = p + 1; }
         } else {
           let ref = label, p = end;
           if (source[p] === '[') { const z = source.indexOf(']', p + 1); if (z >= 0) { if (z > p + 1) ref = source.slice(p + 1, z); end = z + 1; } }
-          const got = linkDefinitions[ref.trim().toLowerCase()]; if (got) { dest = got.href; title = got.title || ''; }
+          const normalizedRef = ref.replace(/\\([\\()[\]])/g, '$1').trim().toLowerCase();
+          const got = linkDefinitions[normalizedRef]; if (got) { dest = got.href; title = got.title || ''; }
         }
-        if (dest !== null && !nestedLink) { out += image ? `<img src="${escapeHtml(dest)}" alt="${escapeHtml(label)}"${title ? ` title="${escapeHtml(title)}"` : ''}>` : `<a href="${escapeHtml(dest.replace(/ /g, '%20'))}"${title ? ` title="${escapeHtml(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
+        if (dest !== null && !nestedLink) { const alt = inline(label, linkDefinitions).replace(/<[^>]*>/g, ''); out += image ? `<img src="${escapeAttribute(dest)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(dest.replace(/ /g, '%20'))}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
       }
     }
     if (c === '\\' && i + 1 < source.length) {
@@ -225,10 +231,10 @@ function inline(source, linkDefinitions = Object.create(null)) {
     }
     if (source.startsWith('**', i)) {
       const end = source.indexOf('**', i + 2);
-      if (end > i + 2) { out += `<strong>${inline(source.slice(i + 2, end), linkDefinitions)}</strong>`; i = end + 2; continue; }
+      if (end > i + 2 && !/\s/.test(source[i + 2]) && !/\s/.test(source[end - 1]) && (!source[i - 1] || /[\s\p{P}\p{S}]/u.test(source[i - 1]))) { out += `<strong>${inline(source.slice(i + 2, end), linkDefinitions)}</strong>`; i = end + 2; continue; }
     }
-    if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(href)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^<\/?[A-Za-z][^>]*>$/.test(raw) || /^<!--/.test(raw)) { out += raw; i = e + 1; continue; } } }
-    if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]+);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += !cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp); } else out += m[0]; i += m[0].length; continue; } }
+    if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(angleDestination(href))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*?)?\s*\/?>$/.test(raw) || /^<!--/.test(raw)) { out += raw; i = e + 1; continue; } } }
+    if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]*);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += escapeHtml(!cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp)); } else out += m[0]; i += m[0].length; continue; } }
     if (c === '\n') {
       let spaces = 0; for (let p = out.length - 1; p >= 0 && out[p] === ' '; p--) spaces++;
       if (spaces >= 2 && i + 1 < source.length) { out = out.slice(0, -spaces); out += '<br>'; }
@@ -316,12 +322,12 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
     }
     if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); body = body.replace(/[ \t]+#+[ \t]*$/, ''); out.push(`<h${d}>${inline(body, linkDefinitions)}</h${d}>\n`); i++; continue; }
     if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { out.push('<hr>\n'); i++; continue; }
-    if ((m = blockLines[i].match(/^( {0,3})(`{3,}|~{3,})/))) {
+    if ((m = blockLines[i].match(/^( {0,3})(`{3,}|~{3,})/)) && !(m[2][0] === '`' && blockLines[i].slice(m[0].length).includes('`'))) {
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
-      const closeFence = new RegExp('^ {0,' + indent + '}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
+      const closeFence = new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
       while (j < blockLines.length && !closeFence.test(blockLines[j])) j++;
       const body = rawLines.slice(i + 1, j).map(line => line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
-      out.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(body)}${j > i + 1 && (body !== '' || blockLines[i + 1] === '') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
+      out.push(`<pre><code${lang ? ` class="language-${escapeAttribute(lang)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
     if ((m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) {
       const q = []; while (i < blockLines.length && (m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) { q.push(m[1]); i++; }
@@ -330,20 +336,22 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
     if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/))) {
       const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
       const marker = m[1], markerIndent = blockLines[i].match(/^ */)[0].length;
-      const markerWidth = marker.length + (blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0].length || 1);
-      const contentIndent = markerIndent + Math.min(markerWidth, 4);
+      const markerPadding = blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0].length || 1;
+      const markerWidth = marker.length + (markerPadding > 4 ? 1 : markerPadding);
+      const contentIndent = markerIndent + markerWidth;
       const startNumber = ordered ? Number.parseInt(marker, 10) : 1;
       const listItems = []; let hasLooseItems = false;
       while (i < blockLines.length) {
         const itemMatch = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/);
-        if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered || (ordered && itemMatch[1].slice(-1) !== marker.slice(-1))) break;
+        if (!itemMatch || (ordered ? itemMatch[1].slice(-1) !== marker.slice(-1) : itemMatch[1] !== marker)) break;
         const itemIndent = blockLines[i].match(/^ */)[0].length;
-        const width = itemMatch[1].length + (blockLines[i].slice(itemIndent + itemMatch[1].length).match(/^[ \t]+/)?.[0].length || 1);
-        const indent = itemIndent + Math.min(width, 4);
+        const padding = blockLines[i].slice(itemIndent + itemMatch[1].length).match(/^[ \t]+/)?.[0].length || 1;
+        const width = itemMatch[1].length + (padding > 4 ? 1 : padding);
+        const indent = itemIndent + width;
         const body = [itemMatch[2] || '']; i++;
         while (i < blockLines.length) {
           const next = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+/);
-          if (next && /^\d/.test(next[1]) === ordered && (!ordered || next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
+          if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
           if (blank(blockLines[i])) {
             let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
             if (k >= blockLines.length) { i = k; break; }
@@ -385,8 +393,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
 export function parse(markdown) {
   let source = String(markdown);
   const linkDefinitions = Object.create(null);
-  source = source.replace(/^ {0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]+)>|(\S+))(?:[ \t]+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?[ \t]*$/gm, (_m, label, angled, plain, dq, sq, paren) => {
-    linkDefinitions[label.trim().toLowerCase()] = { href: (angled ?? plain).replace(/\\([\\()[\]])/g, '$1'), title: dq ?? sq ?? paren ?? '' }; return '';
+  source = source.replace(/^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(?:\n[ \t]*)?(?:<([^>\n]*)>|(?!<)(\S+))(?:(?:[ \t]+|[ \t]*\n[ \t]*)(?:"((?:(?!\n[ \t]*\n)[\s\S])*?)"|'((?:(?!\n[ \t]*\n)[\s\S])*?)'|\((.*)\)))?[ \t]*$/gm, (_m, rawLabel, angled, plain, dq, sq, paren) => {
+    const label = rawLabel.replace(/\\([\\()[\]])/g, '$1');
+    const key = label.trim().toLowerCase();
+    if (!linkDefinitions[key]) linkDefinitions[key] = { href: cleanDestination(angled ?? plain), title: (dq ?? sq ?? paren ?? '').replace(/\\([\p{P}\p{S}])/gu, '$1') };
+    return '';
   });
   return renderBlockTree(source, linkDefinitions);
 }

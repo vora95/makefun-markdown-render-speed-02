@@ -1,9 +1,9 @@
 {
   "type": "module",
   "name": "markdown-render-speed-02-entry",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Independently structured Markdown renderer with run-aware inline and block parsing",
+  "description": "Independent marked-compatible renderer with run-aware inline and block parsing",
   "license": "MIT",
   "exports": "./parse.js"
 }
