@@ -2,15 +2,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse } from './parse.js';
 
-type CaseRow = { id: string; markdown: string };
-
-const inputRoot = resolve(process.env.MAKEFUN_INPUT_DIR || '/input');
-const outputRoot = resolve(process.env.MAKEFUN_OUTPUT_DIR || '/output');
-const rows = JSON.parse(readFileSync(join(inputRoot, 'cases.json'), 'utf8')) as CaseRow[];
-// Render each input independently and preserve the harness order in the output.
-// The parser builds fresh block, reference, and inline state for every call.
-const rendered: string[] = new Array(rows.length);
-for (let index = 0; index < rows.length; index++) rendered[index] = parse(rows[index].markdown);
-
-mkdirSync(outputRoot, { recursive: true });
-writeFileSync(join(outputRoot, 'html.json'), JSON.stringify(rendered), 'utf8');
+type InputCase = { id: string; markdown: string };
+const sourceDir = resolve(process.env.MAKEFUN_INPUT_DIR || '/input');
+const resultDir = resolve(process.env.MAKEFUN_OUTPUT_DIR || '/output');
+const cases = JSON.parse(readFileSync(join(sourceDir, 'cases.json'), 'utf8')) as InputCase[];
+const html = cases.map(({ markdown }) => parse(markdown));
+mkdirSync(resultDir, { recursive: true });
+writeFileSync(join(resultDir, 'html.json'), JSON.stringify(html), 'utf8');

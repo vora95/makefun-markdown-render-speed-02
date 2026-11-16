@@ -1,50 +1,7 @@
-Markdown renderer — Markdown Render Speed 02
+This project is a modified fork informed by marked 18.1.3. Marked is Copyright
+(c) 2011-2024 marked contributors, distributed under the MIT License. Project:
+https://github.com/markedjs/marked
 
-This repository contains an independently structured, modified implementation
-of a Markdown renderer informed by marked 18.1.3. The marked project was
-created by Christopher Jeffrey and is maintained by the marked contributors.
-Project page: https://github.com/markedjs/marked
-
-Copyright (c) 2011–2024 the marked contributors. Marked is distributed under
-the MIT License. This fork preserves that attribution and is separately
-licensed under the MIT terms in LICENSE.
-
-The parser and driver in this repository contain original, independently
-written modifications by vora95 and contributors, including run-aware inline
-code and delimiter handling, link destination parsing, block and list
-recognition, fenced code collection, and an independent batch driver. These
-files are not a copy of the upstream distribution. The upstream copyright and
-MIT attribution above are retained for the marked-derived work.
-
-Additional independently authored refinements include multiline quoted HTML
-tag scanning and balanced-parenthesis handling for bare GFM URLs.
-Further independent work in this fork covers list continuation and tightness,
-CommonMark reference links, delimiter/link interactions, extended GFM
-autolinks, and raw HTML attribute validation.
-Reference definitions are collected during block parsing in a separate
-collection pass so code and HTML blocks do not contribute definitions; this
-block-aware behavior is independently authored in this fork.
-The current emphasis pass independently collects delimiter runs, applies
-flanking and run-of-three checks, and emits paired tags while preserving unused
-markers. This implementation remains a modified fork and does not include the
-upstream parser distribution.
-
-This revision also adjusts HTML block separators, table body rows (including
-empty cells and rows without pipe separators), list looseness, fenced block
-boundaries, blockquote recognition, and autolink URL encoding in independently
-authored parser code.
-
-The repository also carries independent compatibility changes for the practice
-document set, including list-item fence boundary handling and run-aware
-emphasis pairing; these changes retain the upstream attribution above.
-
-This revision also includes independently authored reference-definition validation that rejects an attached title without separator whitespace.
-
-This revision further refines list continuation so block starts are checked
-against the item's content indentation while plain paragraph text may continue
-lazily.
-
-The 2026 revision also includes an independently authored nested-container
-continuation refinement for list and blockquote boundaries.
-
-Revision note: this source retains the independently authored fence and list handling refinements and the upstream attribution above. Compatibility experiments that reduced the practice score were not retained.
+The renderer in this repository has been independently modified for rendering
+speed and compatibility. Portions derived from marked remain under marked's MIT
+license. This repository's MIT license is in LICENSE.

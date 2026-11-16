@@ -33,6 +33,10 @@ function hasShortTickInsideSpan(s) {
 }
 
 function inline(source, linkDefinitions = Object.create(null), disableAutolinks = false) {
+  // Plain prose can be escaped in one pass without building delimiter and
+  // link state. Keep URL and email starters in the guard because GFM scans
+  // those even when the punctuation trigger set is absent.
+  if (!/[*_`\[\]\\!~<&]| {2,}\n|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
   // Resolve emphasis runs as a delimiter stack before rendering the other
   // inline tokens. Each run keeps its unused marker characters literal.
   const marks = [];
@@ -126,8 +130,6 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       for(let k=found+1;k<ci;k++) if(marks[k].open && marks[k].len>marks[k].usedOpen) marks[k].open=false;
     }
   }
-  // Text without inline delimiters can bypass the token scanner entirely.
-  if (!/[*_`\[\]\\!~<&]| {2,}\n|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
   const isPunctuation = c => !!c && /[\p{P}\p{S}]/u.test(c);
   const isWhitespace = c => !!c && /\s/u.test(c);
   const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };

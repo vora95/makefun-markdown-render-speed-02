@@ -1,33 +1,8 @@
 SPDX-License-Identifier: MIT
 
-The independent delimiter-stack emphasis implementation and its integration
-were written for this modified fork and remain covered by the copyright notice
-below.
-
-The source includes independently authored parser refinements for multiline
-HTML tags and balanced punctuation in bare URL recognition.
-
-The current independent modifications also include block/list continuation,
-reference-link normalization, and raw-tag attribute validation.
-
-The independently written parser and driver modifications in this repository,
-including block, list, fence, link, and inline handling, are Copyright (c) 2026
-vora95 and contributors and are licensed under these same terms.
-
-The block-aware reference-definition collection and its two-pass rendering
-integration are additional independent modifications, Copyright (c) 2026
-vora95 and contributors.
-
-This project includes independently written modifications to an implementation
-informed by marked. See NOTICE for the upstream project's attribution and
-license information.
-
 MIT License
 
-Copyright (c) 2026 vora95 and contributors
-
-This modified fork retains the upstream attribution recorded in NOTICE and adds
-independently authored table-row, fence-boundary, quote, and list handling.
+Copyright (c) 2026 vora95
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -46,18 +21,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-This fork includes independently authored compatibility updates for generated
-Markdown documents, including list-item fence boundary handling and run-aware
-emphasis delimiter pairing, and retains the license terms above.
-
-The current revision also refines list block continuation and the boundary
-between list items and following block constructs.
-
-
-The parser includes original compatibility changes for reference-definition destination and title separation.
-
-The 2026 independent list-container refinement in this fork is covered by the
-copyright and license terms above.
-
-Copyright (c) 2026 vora95 and contributors. Independent list-container and fence-boundary refinements in this revision are covered by this license.

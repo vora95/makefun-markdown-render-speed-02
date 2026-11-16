@@ -1,38 +1,13 @@
 # Markdown renderer
 
-A dependency free Markdown renderer for the Markdown Render Speed 02 exercise.
-Import `parse` from `parse.js` to render one string at a time. Each call builds
-fresh block, link, and inline delimiter state; no rendered result is cached.
+A modified fork of marked 18.1.3 focused on fast Markdown rendering. Upstream
+credit and license details are in [NOTICE](NOTICE); this project is distributed
+under the MIT License in [LICENSE](LICENSE).
 
-The batch entry point is `main.ts`. It reads `cases.json` from the configured
-input directory and writes `html.json` to the configured output directory. Both
-paths default to `/input` and `/output` and can be changed for local use with
-`MAKEFUN_INPUT_DIR` and `MAKEFUN_OUTPUT_DIR`.
+Import `parse` from `parse.js` to render a Markdown string. The batch entry
+point `main.ts` reads `cases.json` from `MAKEFUN_INPUT_DIR` (default `/input`)
+and writes rendered HTML to `MAKEFUN_OUTPUT_DIR` (default `/output`).
 
-The parser has independent scanners for block structure, lists, quotes, fences,
-and inline tokens. Reference definitions are collected from parsed paragraph
-blocks before rendering, with destination/title separation checked before a label
-is registered. Definitions inside code and HTML blocks stay literal while forward
-references continue to resolve. Table bodies preserve blank cells and accept body rows that
-omit pipe separators. HTML block endings preserve whitespace-only following
-lines after self-terminating constructs, while tag blocks trim those separators.
-Bare and angle autolinks percent-encode backslashes in their destinations. The
-inline pass pairs emphasis delimiter runs, parses links and images, and handles
-entities, raw tags, and GFM autolinks. The practice comparison reports
-compatibility by CommonMark/GFM section and generated document. The
-implementation is informed by marked 18.1.3; upstream credit is in
-[NOTICE](NOTICE), and the MIT terms are in [LICENSE](LICENSE).
-
-The block renderer matches nested list and quote continuations by container
-indentation, allowing a shallower line to close an inner list while remaining
-inside an outer item. A blank separator before a nested list keeps the outer
-item loose without making the nested list loose. The renderer retains the source indentation of each fence opener while
-collecting its body, so code content is emitted without inline interpretation.
-List looseness follows blank separators tracked while gathering item content.
-Block starts below an item's content indentation end that item; ordinary text
-can still continue a paragraph lazily. Fence collection checks valid closers
-before container boundaries, and fence bodies are dedented relative to their
-opener.
-
-
-The current verified revision remains compatible with all 680 CommonMark and GFM examples in the practice set. Generated documents still expose unresolved list-boundary and inline parsing differences; fence-dedent experiments were reverted when they reduced compatibility.
+The parser supports CommonMark blocks and inline constructs, reference links,
+fenced code, lists, tables, raw HTML, and GFM autolinks. Parsing state is local
+to each call.
