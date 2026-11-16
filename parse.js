@@ -6,6 +6,16 @@ function inline(source, linkDefinitions = Object.create(null)) {
   if (!/[*_`\[\]\\!~<&]|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
   const isPunctuation = c => !!c && /[\p{P}\p{S}]/u.test(c);
   const isWhitespace = c => !!c && /\s/u.test(c);
+  const matchingTickEnd = (s, from, count) => {
+    for (let p = from; p < s.length;) {
+      p = s.indexOf('`', p);
+      if (p < 0) return -1;
+      let q = p + 1; while (s[q] === '`') q++;
+      if (q - p === count) return p;
+      p = q;
+    }
+    return -1;
+  };
   const findStarPair = (s, i) => {
     let n = 1; while (s[i + n] === '*') n++;
     const b = s[i - 1] || '', a = s[i + n] || '';
@@ -15,7 +25,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
       // A code span shields its contents from delimiter processing.
       if (s[j] === '`') {
         let ticks = 1; while (s[j + ticks] === '`') ticks++;
-        const e = s.indexOf('`'.repeat(ticks), j + ticks);
+        const e = matchingTickEnd(s, j + ticks, ticks);
         if (e >= 0) { j = e + ticks; continue; }
         j += ticks; continue;
       }
@@ -62,7 +72,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
     for (let j = i + n; j < s.length;) {
       if (s[j] === '`') {
         let ticks = 1; while (s[j + ticks] === '`') ticks++;
-        const e = s.indexOf('`'.repeat(ticks), j + ticks);
+        const e = matchingTickEnd(s, j + ticks, ticks);
         if (e >= 0) { j = e + ticks; continue; }
         j += ticks; continue;
       }
@@ -121,13 +131,31 @@ function inline(source, linkDefinitions = Object.create(null)) {
         }
       }
     }
+    // Code spans take precedence over bracket syntax and escape handling.
+    if (c === '`') {
+      let n = 1; while (source[i + n] === '`') n++;
+      const end = matchingTickEnd(source, i + n, n);
+      if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
+    }
     // Inline links and images, including the common reference forms.
     if (c === '!' && source[i + 1] === '[' || c === '[') {
       const image = c === '!'; const start = i + (image ? 2 : 1);
       let close = start, depth = 0;
-      for (; close < source.length; close++) { if (source[close] === '[') depth++; else if (source[close] === ']') { if (!depth) break; depth--; } }
+      for (; close < source.length; close++) {
+        if (source[close] === '`') {
+          let ticks = 1; while (source[close + ticks] === '`') ticks++;
+          const codeEnd = matchingTickEnd(source, close + ticks, ticks);
+          if (codeEnd >= 0) { close = codeEnd + ticks - 1; continue; }
+        }
+        if (source[close] === '[') depth++;
+        else if (source[close] === ']') { if (!depth) break; depth--; }
+      }
       if (close < source.length) {
         const label = source.slice(start, close); let dest = null, title = '' , end = close + 1;
+        // Markdown forbids an anchor from containing another anchor. If a
+        // completed link occurs in this label, leave this opening bracket as
+        // text so the inner construct can be rendered on its own.
+        const nestedLink = !image && /!?\[[^\]]*\]\([^\n)]*\)/.test(label);
         if (source[end] === '(') {
           let p = end + 1; while (source[p] === ' ') p++;
           let raw = '', quoted = false, q = '';
@@ -141,18 +169,12 @@ function inline(source, linkDefinitions = Object.create(null)) {
           if (source[p] === '[') { const z = source.indexOf(']', p + 1); if (z >= 0) { if (z > p + 1) ref = source.slice(p + 1, z); end = z + 1; } }
           const got = linkDefinitions[ref.trim().toLowerCase()]; if (got) { dest = got.href; title = got.title || ''; }
         }
-        if (dest !== null) { out += image ? `<img src="${escapeHtml(dest)}" alt="${escapeHtml(label)}"${title ? ` title="${escapeHtml(title)}"` : ''}>` : `<a href="${escapeHtml(dest.replace(/ /g, '%20'))}"${title ? ` title="${escapeHtml(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
+        if (dest !== null && !nestedLink) { out += image ? `<img src="${escapeHtml(dest)}" alt="${escapeHtml(label)}"${title ? ` title="${escapeHtml(title)}"` : ''}>` : `<a href="${escapeHtml(dest.replace(/ /g, '%20'))}"${title ? ` title="${escapeHtml(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
       }
     }
     if (c === '\\' && i + 1 < source.length) {
       if (source[i + 1] === '\n' && i + 2 < source.length) { out += '<br>'; i += 2; continue; }
       if (/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(source[i + 1])) { out += escapeHtml(source[i + 1]); i += 2; continue; }
-    }
-    if (c === '`') {
-      let n = 1; while (source[i + n] === '`') n++;
-      const mark = '`'.repeat(n); let end = -1;
-      for (let p = i + n; p < source.length;) { p = source.indexOf('`', p); if (p < 0) break; let q = p + 1; while (source[q] === '`') q++; if (q - p === n) { end = p; break; } p = q; }
-      if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
     }
     // Resolve the common odd closer in one pass: a single outer opener,
     // a double inner opener, then a triple closer. The final marker closes
@@ -296,7 +318,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
     if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { out.push('<hr>\n'); i++; continue; }
     if ((m = blockLines[i].match(/^( {0,3})(`{3,}|~{3,})/))) {
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
-      while (j < blockLines.length && !new RegExp('^ {0,' + indent + '}' + fence[0] + '{' + fence.length + ',}[ \\t]*$').test(blockLines[j])) j++;
+      const closeFence = new RegExp('^ {0,' + indent + '}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
+      while (j < blockLines.length && !closeFence.test(blockLines[j])) j++;
       const body = rawLines.slice(i + 1, j).map(line => line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
       out.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(body)}${j > i + 1 && (body !== '' || blockLines[i + 1] === '') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
