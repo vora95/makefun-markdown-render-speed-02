@@ -715,11 +715,10 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         let afterShieldedSetext = false;
         const trackFence = line => {
           if (itemFence) {
-            const close = new RegExp('^ {0,3}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
-            if (close.test(line)) itemFence = null;
+            if (itemFence.closeRe.test(line)) itemFence = null;
           } else {
             const open = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-            if (open && !(open[1][0] === '`' && open[2].includes('`'))) itemFence = { char: open[1], indent: line.match(/^ */)[0].length, info: open[2].trim().split(/[ \\t]/)[0], hasBody: false };
+            if (open && !(open[1][0] === '`' && open[2].includes('`'))) { const fc = open[1][0] === '`' ? '`' : '~'; itemFence = { char: open[1], indent: line.match(/^ */)[0].length, info: open[2].trim().split(/[ \\t]/)[0], hasBody: false, closeRe: new RegExp('^ {0,3}' + fc + '{' + open[1].length + ',}[ \\t]*$'), closeReIndent: new RegExp('^ {0,' + (indent + 3) + '}' + fc + '{' + open[1].length + ',}[ \\t]*$') }; }
           }
         };
         trackFence(body[0]);
@@ -728,8 +727,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
           if (itemFence) {
             const lead = blockLines[i].match(/^ */)[0].length;
-            const close = new RegExp('^ {0,' + (indent + 3) + '}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
-            const validClose = close.test(blockLines[i]);
+            const validClose = itemFence.closeReIndent.test(blockLines[i]);
             if (validClose && lead >= indent) { body.push(itemContent(blockLines[i], indent)); itemFence = null; i++; continue; }
             if (validClose) {
               body.push(itemFence.char);
