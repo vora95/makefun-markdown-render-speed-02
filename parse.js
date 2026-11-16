@@ -1,7 +1,7 @@
 // Small, dependency-free Markdown renderer. Parsing is performed afresh for each call.
 const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-function inline(source) {
+function inline(source, refs = Object.create(null)) {
   // Resolve numeric character references using the same Unicode validity bounds
   // used by HTML, and escape ampersands that do not begin a valid reference.
   source = source.replace(/&#(?:([0-9]{1,7})|[xX]([0-9a-fA-F]{1,6}));|&(?!(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]+);)/g, (m, dec, hex) => {
@@ -11,6 +11,8 @@ function inline(source) {
   });
   source = source.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
   source = source.replace(/\\\n/g, '<br>');
+  source = source.replace(/<(https?:\/\/[^ <>]+|ftp:\/\/[^ <>]+|www\.[^ <>]+)>/gi, (_m, u) => `<a href="${escapeHtml(/^www\./i.test(u) ? 'http://' + u : u)}">${escapeHtml(u)}</a>`);
+  source = source.replace(/<([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})>/g, (_m, u) => `<a href="mailto:${escapeHtml(u)}">${escapeHtml(u)}</a>`);
   source = source.replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/g, (m, lead, url) => {
     const clean = url.replace(/[.,!?;:]+$/, '');
     const suffix = url.slice(clean.length);
@@ -20,6 +22,29 @@ function inline(source) {
   let out = '';
   for (let i = 0; i < source.length;) {
     const c = source[i];
+    // Inline links and images, including the common reference forms.
+    if (c === '!' && source[i + 1] === '[' || c === '[') {
+      const image = c === '!'; const start = i + (image ? 2 : 1);
+      let close = start, depth = 0;
+      for (; close < source.length; close++) { if (source[close] === '[') depth++; else if (source[close] === ']') { if (!depth) break; depth--; } }
+      if (close < source.length) {
+        const label = source.slice(start, close); let dest = null, title = '' , end = close + 1;
+        if (source[end] === '(') {
+          let p = end + 1; while (source[p] === ' ') p++;
+          let raw = '', quoted = false, q = '';
+          if (source[p] === '<') { const z = source.indexOf('>', p + 1); if (z >= 0) { raw = source.slice(p + 1, z); p = z + 1; } }
+          else { const b = p; let par = 0; while (p < source.length && (par || !/[\s)]/.test(source[p]))) { if (source[p] === '(') par++; if (source[p] === ')') par--; p++; } raw = source.slice(b, p); }
+          while (source[p] === ' ') p++;
+          if (/['"]/.test(source[p])) { q = source[p++]; const z = source.indexOf(q, p); if (z >= 0) { title = source.slice(p, z); p = z + 1; while (source[p] === ' ') p++; } }
+          if (source[p] === ')') { dest = raw.replace(/\\([\\()])/g, '$1'); end = p + 1; }
+        } else {
+          let ref = label, p = end;
+          if (source[p] === '[') { const z = source.indexOf(']', p + 1); if (z >= 0) { if (z > p + 1) ref = source.slice(p + 1, z); end = z + 1; } }
+          const got = refs[ref.trim().toLowerCase()]; if (got) { dest = got.href; title = got.title || ''; }
+        }
+        if (dest !== null) { out += image ? `<img src="${escapeHtml(dest)}" alt="${escapeHtml(label)}"${title ? ` title="${escapeHtml(title)}"` : ''}>` : `<a href="${escapeHtml(dest)}"${title ? ` title="${escapeHtml(title)}"` : ''}>${inline(label, refs)}</a>`; i = end; continue; }
+      }
+    }
     if (c === '\\' && i + 1 < source.length) {
       if (/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(source[i + 1])) { out += escapeHtml(source[i + 1]); i += 2; continue; }
     }
@@ -31,7 +56,7 @@ function inline(source) {
     if (source.startsWith('**', i) || source.startsWith('__', i) || source.startsWith('~~', i) || c === '*' || c === '_') {
       const mark = source.startsWith('**', i) || source.startsWith('__', i) || source.startsWith('~~', i) ? source.slice(i, i + 2) : c;
       const end = source.indexOf(mark, i + mark.length);
-      if (end > i + mark.length) { const tag = mark.length === 2 ? (mark === '~~' ? 'del' : 'strong') : 'em'; out += `<${tag}>${inline(source.slice(i + mark.length, end))}</${tag}>`; i = end + mark.length; continue; }
+      if (end > i + mark.length) { const tag = mark.length === 2 ? (mark === '~~' ? 'del' : 'strong') : 'em'; out += `<${tag}>${inline(source.slice(i + mark.length, end), refs)}</${tag}>`; i = end + mark.length; continue; }
     }
     if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1); if (/^<\/?[A-Za-z][^>]*>$/.test(raw) || /^<!--/.test(raw) || /^<https?:\/\/[^ >]+>$/.test(raw) || /^<[^ <>@]+@[^ <>]+>$/.test(raw)) { out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#\d{1,7}|#x[\da-f]{1,6}|[A-Za-z][A-Za-z\d]+);/i); if (m) { out += m[0]; i += m[0].length; continue; } }
@@ -45,8 +70,8 @@ function inline(source) {
   return out;
 }
 
-function renderBlocks(markdown) {
-  const src = markdown.replace(/\r\n?/g, '\n').replace(/\t/g, '    ');
+function renderBlocks(markdown, refs = Object.create(null)) {
+  const src = markdown.replace(/\r\n?/g, '\n');
   const lines = src.split('\n');
   const out = [];
   let i = 0;
@@ -54,31 +79,69 @@ function renderBlocks(markdown) {
   while (i < lines.length) {
     if (blank(lines[i])) { i++; continue; }
     let m;
-    if ((m = lines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*#*\s*$/))) { const d = m[1].length; out.push(`<h${d}>${inline(m[2].trim())}</h${d}>\n`); i++; continue; }
+    // GFM tables: a pipe header followed by a delimiter row.
+    if (i + 1 < lines.length && lines[i].includes('|') && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+      const split = row => { row = row.trim().replace(/^\|/, '').replace(/\|$/, ''); return row.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|')); };
+      const heads = split(lines[i]), aligns = split(lines[i + 1]).map(c => c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : '');
+      const row = (cells, tag) => `<tr>\n${heads.map((_, n) => { const a = aligns[n]; return `<${tag}${a ? ` align="${a}"` : ''}>${inline(cells[n] || '', refs)}</${tag}>\n`; }).join('')}</tr>\n`;
+      let html = '<table>\n<thead>\n' + row(heads, 'th') + '</thead>\n'; i += 2;
+      if (i < lines.length && !blank(lines[i]) && lines[i].includes('|')) { html += '<tbody>'; while (i < lines.length && !blank(lines[i]) && lines[i].includes('|')) html += row(split(lines[i++]), 'td'); html += '</tbody>'; }
+      out.push(html + '</table>\n'); continue;
+    }
+    // Block HTML is passed through verbatim by marked; its contents are not parsed.
+    if (/^ {0,3}(?:<(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>)|<!--|<\?|<![A-Z]|<!\[CDATA\[)/i.test(lines[i])) {
+      const start = i; const tag = lines[i].match(/^ {0,3}<\s*(pre|script|style|textarea)\b/i)?.[1];
+      if (tag) { const close = new RegExp(`<\\/${tag}\\s*>`, 'i'); while (i < lines.length && !close.test(lines[i++])) {} }
+      else { while (i < lines.length && !blank(lines[i])) i++; }
+      out.push(lines.slice(start, i).join('\n') + (i < lines.length || src.endsWith('\n') ? '\n' : '')); continue;
+    }
+    // Indented code blocks are recognized before other block constructs.
+    if (/^(?: {4,}|\t)/.test(lines[i])) {
+      const code = [];
+      while (i < lines.length) {
+        if (/^(?: {4,}|\t)/.test(lines[i])) {
+          const lead = lines[i].match(/^ */)[0].length;
+          code.push(lines[i].startsWith('\t') ? lines[i].slice(1) : lines[i].slice(4)); i++;
+        } else if (blank(lines[i])) {
+          let k = i; while (k < lines.length && blank(lines[k])) k++;
+          if (k < lines.length && /^(?: {4,}|\t)/.test(lines[k])) { while (i < k) { code.push(''); i++; } }
+          else break;
+        } else break;
+      }
+      while (code.length && code[code.length - 1] === '') code.pop();
+      out.push(`<pre><code>${escapeHtml(code.join('\n'))}${code.length ? '\n' : ''}</code></pre>\n`); continue;
+    }
+    if ((m = lines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); body = body.replace(/[ \t]+#+[ \t]*$/, ''); out.push(`<h${d}>${inline(body, refs)}</h${d}>\n`); i++; continue; }
     if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(lines[i])) { out.push('<hr>\n'); i++; continue; }
-    if ((m = lines[i].match(/^ {0,3}(?:```+|~~~+)/))) {
-      const fence = m[0].trim(), lang = lines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
-      while (j < lines.length && !new RegExp('^ {0,3}' + fence[0] + '{' + fence.length + ',}\\s*$').test(lines[j])) j++;
-      out.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(lines.slice(i + 1, j).join('\n'))}${j > i + 1 ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, lines.length); continue;
+    if ((m = lines[i].match(/^( {0,3})(`{3,}|~{3,})/))) {
+      const indent = m[1].length, fence = m[2], lang = lines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
+      while (j < lines.length && !new RegExp('^ {0,' + indent + '}' + fence[0] + '{' + fence.length + ',}[ \\t]*$').test(lines[j])) j++;
+      const body = lines.slice(i + 1, j).map(line => line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
+      out.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(body)}${j > i + 1 && (body !== '' || lines[i + 1] === '') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, lines.length); continue;
     }
     if ((m = lines[i].match(/^ {0,3}> ?(.*)$/))) {
       const q = []; while (i < lines.length && (m = lines[i].match(/^ {0,3}> ?(.*)$/))) { q.push(m[1]); i++; }
-      out.push(`<blockquote>\n${renderBlocks(q.join('\n'))}</blockquote>\n`); continue;
+      out.push(`<blockquote>\n${renderBlocks(q.join('\n'), refs)}</blockquote>\n`); continue;
     }
     if ((m = lines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/))) {
       const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul', items = [];
       while (i < lines.length && (m = lines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/)) && /^\d/.test(m[1]) === ordered) { items.push(m[2]); i++; }
-      out.push(`<${tag}>\n${items.map(x => `<li>${inline(x)}</li>\n`).join('')}</${tag}>\n`); continue;
+      out.push(`<${tag}>\n${items.map(x => { const task = x.match(/^\[([ xX])\][ \t]+(.*)$/); return `<li>${task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ${inline(task[2], refs)}` : inline(x, refs)}</li>\n`; }).join('')}</${tag}>\n`); continue;
     }
-    if (i + 1 < lines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(lines[i + 1])) { const d = lines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(lines[i].trim())}</h${d}>\n`); i += 2; continue; }
+    if (i + 1 < lines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(lines[i + 1])) { const d = lines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(lines[i].trim(), refs)}</h${d}>\n`); i += 2; continue; }
     let j = i + 1;
     while (j < lines.length && !blank(lines[j]) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(lines[j])) j++;
-    out.push(`<p>${inline(lines.slice(i, j).join('\n'))}</p>\n`); i = j;
+    out.push(`<p>${inline(lines.slice(i, j).join('\n'), refs)}</p>\n`); i = j;
   }
   return out.join('');
 }
 
 /** Render a Markdown string into HTML. */
 export function parse(markdown) {
-  return renderBlocks(String(markdown));
+  let source = String(markdown);
+  const refs = Object.create(null);
+  source = source.replace(/^ {0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]+)>|(\S+))(?:[ \t]+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?[ \t]*$/gm, (_m, label, angled, plain, dq, sq, paren) => {
+    refs[label.trim().toLowerCase()] = { href: (angled ?? plain).replace(/\\([\\()[\]])/g, '$1'), title: dq ?? sq ?? paren ?? '' }; return '';
+  });
+  return renderBlocks(source, refs);
 }
