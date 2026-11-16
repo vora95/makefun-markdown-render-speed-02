@@ -3,7 +3,7 @@
   "name": "markdown-render-speed-02-entry",
   "version": "1.4.4",
   "private": true,
-  "description": "Modified independent Markdown renderer with block, list fence, table, reference link, and inline token handling",
+  "description": "Modified independent Markdown renderer with list block boundaries, fenced code, tables, reference links, and inline tokens",
   "license": "MIT",
   "exports": "./parse.js"
 }

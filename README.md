@@ -26,7 +26,7 @@ implementation is informed by marked 18.1.3; upstream credit is in
 The block renderer retains the source indentation of each fence opener while
 collecting its body, so code content is emitted without inline interpretation.
 List looseness follows blank separators tracked while gathering item content.
-Within a list item, fence collection checks valid closers before container
-boundaries. A dedented non-closer ends the item unless a later closer returns
-to the marker column; the remaining lines are parsed by the enclosing block
-renderer.
+Block starts below an item's content indentation end that item; ordinary text
+can still continue a paragraph lazily. Fence collection checks valid closers
+before container boundaries, and fence bodies are dedented relative to their
+opener.

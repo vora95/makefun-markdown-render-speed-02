@@ -51,5 +51,8 @@ This fork includes independently authored compatibility updates for generated
 Markdown documents, including list-item fence boundary handling and run-aware
 emphasis delimiter pairing, and retains the license terms above.
 
+The current revision also refines list block continuation and the boundary
+between list items and following block constructs.
+
 
 The parser includes original compatibility changes for reference-definition destination and title separation.

@@ -332,7 +332,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       out.push(raw); continue;
     }
     // Indented code blocks are recognized before other block constructs.
-    if (/^(?: {4,}|\t)/.test(blockLines[i])) {
+    const nestedFenceCandidate = nestedContext && /^ {4,20}(?:`{3,}|~{3,})/.test(blockLines[i]);
+    if (/^(?: {4,}|\t)/.test(blockLines[i]) && !nestedFenceCandidate) {
       const code = [];
       while (i < blockLines.length) {
         if (/^(?: {4,}|\t)/.test(blockLines[i])) {
@@ -350,7 +351,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     }
     if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); if (/^ {0,3}#{1,6}[ \t]+#+[ \t]*$/.test(blockLines[i])) body = ''; else body = body.replace(/[ \t]+#+[ \t]*$/, ''); out.push(`<h${d}>${inline(body, linkDefinitions)}</h${d}>\n`); i++; continue; }
     if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { out.push('<hr>\n'); i++; continue; }
-    if ((m = blockLines[i].match(/^( {0,3})(`{3,}|~{3,})/)) && !(m[2][0] === '`' && blockLines[i].slice(m[0].length).includes('`'))) {
+    if ((m = blockLines[i].match(nestedContext ? /^( {0,20})(`{3,}|~{3,})/ : /^( {0,3})(`{3,}|~{3,})/)) && !(m[2][0] === '`' && blockLines[i].slice(m[0].length).includes('`'))) {
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
       const closeFence = new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
       while (j < blockLines.length && !closeFence.test(blockLines[j])) j++;
@@ -447,9 +448,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
             if (k >= blockLines.length) { i = k; break; }
             const followingFence = blockLines[k].match(/^ *(?:`{3,}|~{3,})/);
-            if (followingFence && blockLines[k].match(/^ */)[0].length <= itemIndent) break;
+            // A fence starts a new block in this item only at its content
+            // indentation. A shallower fence closes the list before parsing.
+            if (followingFence && blockLines[k].match(/^ */)[0].length < indent) break;
             if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); i++; hasLooseItems = true; continue; }
-            if (blockLines[k].match(/^ {0,3}>/)) { body.push(''); i++; hasLooseItems = true; continue; }
+            if (blockLines[k].match(/^ {0,3}>/) && blockLines[k].match(/^ */)[0].length >= indent) { body.push(''); i++; hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead > indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); i++; if (!nestedMarker && (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
             break;
           }
@@ -457,7 +460,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (emptyMarker && body.length === 1 && !body[0].trim() && lead > itemIndent && lead < indent) { body.push(blockLines[i].slice(lead)); trackFence(body[body.length - 1]); }
           else if (lead === 4 && itemIndent === 3 && /^ {4}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(blockLines[i])) body.push('\\' + blockLines[i].slice(lead));
           else if (lead >= indent) { body.push(blockLines[i].slice(indent)); trackFence(body[body.length - 1]); }
-          else if (lead > itemIndent && body.length && body.at(-1).trim() && !/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t]|>|```|~~~|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(blockLines[i])) body.push(blockLines[i].slice(lead));
+          else if (lead > itemIndent && body.length && body.at(-1).trim() && lead < indent && !/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t]|>|```|~~~|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(blockLines[i])) body.push(blockLines[i].slice(lead));
           else if (lead === 0 && body.length && body.at(-1).trim() && !/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t]|>|```|~~~|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(blockLines[i])) body.push(blockLines[i]);
           else break;
           i++;

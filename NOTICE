@@ -39,3 +39,7 @@ document set, including list-item fence boundary handling and run-aware
 emphasis pairing; these changes retain the upstream attribution above.
 
 This revision also includes independently authored reference-definition validation that rejects an attached title without separator whitespace.
+
+This revision further refines list continuation so block starts are checked
+against the item's content indentation while plain paragraph text may continue
+lazily.
