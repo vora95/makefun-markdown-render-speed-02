@@ -78,12 +78,16 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   // run are suppressed (the link itself still forms).
   let suppressMarksUntil = -1;
   const unclosedTickCount = (s) => { for (let i = 0; i < s.length;) { if (s[i] === '`') { let n = 1; while (s[i + n] === '`') n++; const e = matchingTickEnd(s, i + n, n); if (e < 0) return n; i = e + n; } else i++; } return 0; };
+  // True when a backtick run inside a link label has no matching closer
+  // anywhere later in the source: such a label never closes, so the
+  // bracket is literal and its _/* marks must still be collected.
+  const labelUnclosedInSource = (label, labelStart) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; if (n === 1) { const e = matchingTickEnd(source, labelStart + i + n, n); if (e < 0) return true; i = e - labelStart + n; } else { const e = matchingTickEnd(source, labelStart + i + n, n); i = e >= 0 ? e - labelStart + n : i + n; } } else i++; } return false; };
   for (let p = 0; p < source.length;) {
     const ch = source[p];
     if (ch === '\\' && p+1<source.length && /[\p{P}\p{S}]/u.test(source[p+1])) { p+=2; continue; }
     if (ch === '`') { let n = 1; while (source[p + n] === '`') n++; let e = matchingTickEnd(source, p + n, n); if (e >= 0) { p = e + n; continue; } p += n; continue; }
     if (ch === '<') { let q=p+1, quote=''; for(;q<source.length;q++){const x=source[q];if(quote){if(x===quote)quote='';}else if(x==='"'||x==="'")quote=x;else if(x==='>')break;} if(q<source.length){tagSpans.push([p, q+1]); p=q+1;continue;} }
-    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
+    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!labelUnclosedInSource(label, p+(ch==='!'?2:1)) && !/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
     if (ch !== '*' && ch !== '_') { p++; continue; }
     if (suppressMarksUntil >= 0) { if (p < suppressMarksUntil) { let end = p + 1; while (source[end] === ch) end++; p = end; continue; } suppressMarksUntil = -1; }
     let end = p + 1; while (source[end] === ch) end++;
@@ -251,6 +255,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           let ticks = 1; while (source[close + ticks] === '`') ticks++;
           const codeEnd = matchingTickEnd(source, close + ticks, ticks);
           if (codeEnd >= 0) { let d = depth, bad = false; if (ticks >= 2) { for (let q = close + 1; q < codeEnd; q++) { if (source[q] === '\\') { q++; continue; } if (source[q] === '[') d++; else if (source[q] === ']') { if (d === 0) { const after = source[q + 1]; if (after === '(' || after === '[') { bad = true; break; } } else d--; } } } if (!bad) { close = codeEnd + ticks - 1; continue; } }
+          else if (ticks === 1) { close = source.length; break; }
         }
         if (source[close] === '[') depth++;
         else if (source[close] === ']') { if (!depth) break; depth--; }
