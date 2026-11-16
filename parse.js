@@ -368,7 +368,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         cursor += run;
       }
       if (end >= 0) {
-        out += `<del>${inline(source.slice(i + n, end), linkDefinitions)}</del>`;
+        out += `<del>${inline(source.slice(i + n, end), linkDefinitions, disableAutolinks)}</del>`;
         i = end + n; continue;
       }
       // No closer: the whole run is literal text (a failed ~~ opener is
