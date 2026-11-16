@@ -524,12 +524,21 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     // tab donates that tab's first expanded space as the separator.
     const expandQuoteTabs = (line, content) => { if (!content.includes('\t')) return content; const startCol=line.length-content.length; const beforeChar=line[startCol-1]; let col=startCol,expanded='',seenNonWs=false; for(const ch of content){if(ch==='\t'&&!seenNonWs){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{if(ch==='\t')expanded+='\t';else expanded+=ch;col++;if(ch!==' '&&ch!=='\t')seenNonWs=true;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); return expanded; };
     if ((m = quoteLine(blockLines[i]))) {
-      const q = []; let quoteFence = false; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
+      const q = []; let quoteFenceChar = '', quoteFenceLen = 0; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
         content=expandQuoteTabs(blockLines[i], content);
         if (content === ' ' && q.some(line=>line.trim())) content='\u0001';
         const fm = content.match(/^ {0,3}(`{3,}|~{3,})/);
-        if (fm && !(fm[1][0] === '`' && content.slice(fm[0].length).includes('`'))) quoteFence = !quoteFence;
+        if (fm && !(fm[1][0] === '`' && content.slice(fm[0].length).includes('`'))) {
+          // A fence line only toggles the quote's fence state when it can
+          // actually open or close one: a backtick fence line inside a
+          // tilde fence (or vice versa), a shorter run, or a run with an
+          // info string is fence CONTENT, not a boundary. A bare toggle
+          // lets a ```json line close a ~~~~ fence, after which a lazy
+          // line wrongly joins the quote instead of ending it.
+          if (!quoteFenceChar) { quoteFenceChar = fm[1][0]; quoteFenceLen = fm[1].length; }
+          else if (fm[1][0] === quoteFenceChar && fm[1].length >= quoteFenceLen && /^[ \t]*$/.test(content.slice(fm[0].length))) { quoteFenceChar = ''; quoteFenceLen = 0; }
+        }
         q.push(content); i++;
       }
       // An unmarked line continues a paragraph lazily when that paragraph
@@ -541,7 +550,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       // shield from an outer quote still counts as a setext line here.
       let prevLazy = false;
       let lastLazySetext = false;
-      while(i<blockLines.length && !quoteFence && !blank(blockLines[i]) && q.length && (quoteLine(blockLines[i]) || (q.at(-1).trim() && (!interrupt(q.at(-1)) || lastLazySetext || /^ {0,3}\d{1,9}[.)][ \t]+>/.test(q.at(-1))) && !/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(q.at(-1))))) {
+      while(i<blockLines.length && !quoteFenceChar && !blank(blockLines[i]) && q.length && (quoteLine(blockLines[i]) || (q.at(-1).trim() && (!interrupt(q.at(-1)) || lastLazySetext || /^ {0,3}\d{1,9}[.)][ \t]+>/.test(q.at(-1))) && !/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(q.at(-1))))) {
         const nextQuote=quoteLine(blockLines[i]);
         if(nextQuote){q.push(expandQuoteTabs(blockLines[i], nextQuote[1]));i++;prevLazy=false;lastLazySetext=false;continue;}
         const rawLazy = blockLines[i];
@@ -549,6 +558,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         // An indented lazy line (4+ spaces) is paragraph text with
         // exactly four spaces removed; fewer spaces are kept as-is.
         if (interrupt(rawLazy) && !/^ {4,}/.test(rawLazy)) break;
+        // A lazy line starting an HTML block (types 1-6) is a new block,
+        // not paragraph continuation text: marked's lazy-line paragraph
+        // pattern excludes html starts, so the quote ends here. Type 7
+        // (inline tags) still continues the paragraph.
+        if (!/^ {4,}/.test(rawLazy) && (identifyHtmlBlock(rawLazy)?.type ?? 7) <= 6) break;
         i++;
         let lazy = /^ {4,}/.test(rawLazy) ? rawLazy.slice(4) : rawLazy;
         // The stripped line is paragraph text, never a block start:
