@@ -73,13 +73,19 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   const tagSpans = [];
   const word = c => !!c && /[\p{L}\p{N}]/u.test(c);
   const punct = c => !!c && /[\p{P}\p{S}]/u.test(c);
+  // A link whose label holds an unclosed backtick run leaves marked inside
+  // a code span: emphasis marks after the link up to the next backtick
+  // run are suppressed (the link itself still forms).
+  let suppressMarksUntil = -1;
+  const unclosedTickCount = (s) => { for (let i = 0; i < s.length;) { if (s[i] === '`') { let n = 1; while (s[i + n] === '`') n++; const e = matchingTickEnd(s, i + n, n); if (e < 0) return n; i = e + n; } else i++; } return 0; };
   for (let p = 0; p < source.length;) {
     const ch = source[p];
     if (ch === '\\' && p+1<source.length && /[\p{P}\p{S}]/u.test(source[p+1])) { p+=2; continue; }
     if (ch === '`') { let n = 1; while (source[p + n] === '`') n++; let e = matchingTickEnd(source, p + n, n); if (e >= 0) { p = e + n; continue; } p += n; continue; }
     if (ch === '<') { let q=p+1, quote=''; for(;q<source.length;q++){const x=source[q];if(quote){if(x===quote)quote='';}else if(x==='"'||x==="'")quote=x;else if(x==='>')break;} if(q<source.length){tagSpans.push([p, q+1]); p=q+1;continue;} }
-    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label)) { p=z+1; continue; } } } }
+    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
     if (ch !== '*' && ch !== '_') { p++; continue; }
+    if (suppressMarksUntil >= 0) { if (p < suppressMarksUntil) { let end = p + 1; while (source[end] === ch) end++; p = end; continue; } suppressMarksUntil = -1; }
     let end = p + 1; while (source[end] === ch) end++;
     const before = source[p - 1] || '', after = source[end] || '';
     const left = !!after && !/\s/.test(after) && (!punct(after) || !before || /\s/.test(before) || punct(before));
@@ -244,7 +250,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         if (source[close] === '`') {
           let ticks = 1; while (source[close + ticks] === '`') ticks++;
           const codeEnd = matchingTickEnd(source, close + ticks, ticks);
-          if (codeEnd >= 0) { close = codeEnd + ticks - 1; continue; }
+          if (codeEnd >= 0) { let d = depth, bad = false; if (ticks >= 2) { for (let q = close + 1; q < codeEnd; q++) { if (source[q] === '\\') { q++; continue; } if (source[q] === '[') d++; else if (source[q] === ']') { if (d === 0) { const after = source[q + 1]; if (after === '(' || after === '[') { bad = true; break; } } else d--; } } } if (!bad) { close = codeEnd + ticks - 1; continue; } }
         }
         if (source[close] === '[') depth++;
         else if (source[close] === ']') { if (!depth) break; depth--; }
