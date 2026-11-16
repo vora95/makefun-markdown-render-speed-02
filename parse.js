@@ -154,6 +154,19 @@ function inline(source, linkDefinitions = Object.create(null)) {
       for (let p = i + n; p < source.length;) { p = source.indexOf('`', p); if (p < 0) break; let q = p + 1; while (source[q] === '`') q++; if (q - p === n) { end = p; break; } p = q; }
       if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
     }
+    // Resolve the common odd closer in one pass: a single outer opener,
+    // a double inner opener, then a triple closer. The final marker closes
+    // the outer span while the first two close the inner one.
+    if (c === '_' || c === '*') {
+      const mark = c;
+      const escapedMark = mark === '*' ? '\\*' : '_';
+      const closeRun = escapedMark.repeat(3);
+      const nested = source.slice(i).match(new RegExp('^' + escapedMark + '([^' + mark + '\\n]+?)' + escapedMark.repeat(2) + '([^' + mark + '\\n]+?)' + closeRun));
+      if (nested) {
+        out += `<em>${inline(nested[1], linkDefinitions)}<strong>${inline(nested[2], linkDefinitions)}</strong></em>`;
+        i += nested[0].length; continue;
+      }
+    }
     if (c === '*') {
       const pair = findStarPair(source, i);
       if (pair) {
@@ -172,10 +185,17 @@ function inline(source, linkDefinitions = Object.create(null)) {
         i = pair.end + pair.closer; continue;
       }
     }
-    if (source.startsWith('**', i) || source.startsWith('~~', i)) {
-      const mark = source.slice(i, i + 2);
-      const end = source.indexOf(mark, i + mark.length);
-      if (end > i + mark.length) { const tag = mark === '~~' ? 'del' : 'strong'; out += `<${tag}>${inline(source.slice(i + mark.length, end), linkDefinitions)}</${tag}>`; i = end + mark.length; continue; }
+    if (c === '~') {
+      let n = 1; while (source[i + n] === '~') n++;
+      const mark = '~'.repeat(n), end = source.indexOf(mark, i + n);
+      if (end > i + n && !/\s/.test(source[i + n]) && !/\s/.test(source[end - 1])) {
+        out += `<del>${inline(source.slice(i + n, end), linkDefinitions)}</del>`;
+        i = end + n; continue;
+      }
+    }
+    if (source.startsWith('**', i)) {
+      const end = source.indexOf('**', i + 2);
+      if (end > i + 2) { out += `<strong>${inline(source.slice(i + 2, end), linkDefinitions)}</strong>`; i = end + 2; continue; }
     }
     if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(href)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^<\/?[A-Za-z][^>]*>$/.test(raw) || /^<!--/.test(raw)) { out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]+);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += !cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp); } else out += m[0]; i += m[0].length; continue; } }
@@ -192,7 +212,8 @@ function inline(source, linkDefinitions = Object.create(null)) {
 
 function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
   const src = markdown.replace(/\r\n?/g, '\n');
-  const blockLines = src.split('\n').map(line => { let col = 0, n = 0; while (n < line.length && (line[n] === ' ' || line[n] === '\t')) { if (line[n] === '\t') { const step = 4 - col % 4; line = line.slice(0, n) + ' '.repeat(step) + line.slice(n + 1); col += step; n += step; } else { col++; n++; } } return line; });
+  const rawLines = src.split('\n');
+  const blockLines = rawLines.map(line => { let col = 0, n = 0; while (n < line.length && (line[n] === ' ' || line[n] === '\t')) { if (line[n] === '\t') { const step = 4 - col % 4; line = line.slice(0, n) + ' '.repeat(step) + line.slice(n + 1); col += step; n += step; } else { col++; n++; } } return line; });
   const out = [];
   let i = 0;
   const blank = s => /^[ ]*$/.test(s);
@@ -252,7 +273,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
       while (i < blockLines.length) {
         if (/^(?: {4,}|\t)/.test(blockLines[i])) {
           const lead = blockLines[i].match(/^ */)[0].length;
-          code.push(blockLines[i].startsWith('\t') ? blockLines[i].slice(1) : blockLines[i].slice(4)); i++;
+          const original = rawLines[i];
+          code.push(original.startsWith('\t') ? original.slice(1) : original.startsWith('    ') ? original.slice(4) : blockLines[i].slice(4)); i++;
         } else if (blank(blockLines[i])) {
           let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
           if (k < blockLines.length && /^(?: {4,}|\t)/.test(blockLines[k])) { while (i < k) { code.push(''); i++; } }
@@ -267,7 +289,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
     if ((m = blockLines[i].match(/^( {0,3})(`{3,}|~{3,})/))) {
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
       while (j < blockLines.length && !new RegExp('^ {0,' + indent + '}' + fence[0] + '{' + fence.length + ',}[ \\t]*$').test(blockLines[j])) j++;
-      const body = blockLines.slice(i + 1, j).map(line => line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
+      const body = rawLines.slice(i + 1, j).map(line => line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
       out.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(body)}${j > i + 1 && (body !== '' || blockLines[i + 1] === '') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
     if ((m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) {
