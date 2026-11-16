@@ -430,7 +430,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           const line = blockLines[i++];
           if (terminator.test(line)) break;
         }
-        if (i < blockLines.length && (kind.type === 1 ? realBlank(i) : blockLines[i] === '' && !(i === blockLines.length - 1 && src.endsWith('\n')))) stopReason = 'blank';
+        if (i < blockLines.length && (blockLines[i] === '' && !(i === blockLines.length - 1 && src.endsWith('\n')))) stopReason = 'blank';
         else if (i < blockLines.length) stopReason = 'content';
       } else {
         while (i < blockLines.length && !realBlank(i)) i++;
