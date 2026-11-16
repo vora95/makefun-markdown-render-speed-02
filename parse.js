@@ -21,7 +21,9 @@ const autolinkRe = /(?:(?:https?|ftp):\/\/[^\s<>]+|www\.[^\s<>]+|[A-Za-z][A-Za-z
 // First character of any autolink alternative (scheme letter, www, or an
 // email local-part character). Positions starting with anything else can
 // never match, so the regex is not even attempted there.
-const autolinkStart = /[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]/;
+// Single-char autolink dispatch without a regex call per character: the
+// class is ASCII alphanumerics plus .!#$%&'*+/=?^_`{|}~- .
+const autolinkStartChar = c => { const k = c.charCodeAt(0); return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122) || '.!#$%&\'*+/=?^_`{|}~-'.includes(c); };
 // marked's GFM autolink backpedal: repeatedly keep only the prefix this
 // matches. It drops trailing punctuation, trims an unmatched '(' (and
 // everything after it), keeps a balanced (group), and keeps a ']' or '}'
@@ -86,8 +88,10 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   // strikethrough is suppressed inside them too (marked swallows the
   // whole span as text, so no inline construct forms there).
   const tagSpans = [];
-  const word = c => !!c && /[\p{L}\p{N}]/u.test(c);
-  const punct = c => !!c && /[\p{P}\p{S}]/u.test(c);
+  // ASCII fast paths (exact: ASCII letters/digits are \p{L}/\p{N}, ASCII
+  // punctuation is \p{P}/\p{S}, ASCII whitespace is the 6 \s chars).
+  const word = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122); return /[\p{L}\p{N}]/u.test(c); };
+  const punct = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
   // A link whose label holds an unclosed backtick run leaves marked inside
   // a code span: emphasis marks after the link up to the next backtick
   // run are suppressed (the link itself still forms).
@@ -212,14 +216,17 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       for(let k=found+1;k<ci;k++) if(marks[k].open && marks[k].len>marks[k].usedOpen) marks[k].open=false;
     }
   }
-  const isPunctuation = c => !!c && /[\p{P}\p{S}]/u.test(c);
-  const isWhitespace = c => !!c && /\s/u.test(c);
+  const isPunctuation = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
+  const isWhitespace = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v'; return /\s/u.test(c); };
   const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };
   let out = '';
   // Literal text accumulates in `lit` and is escaped once per run instead
   // of one escapeHtml() call per character. Every branch that emits markup
   // flushes first so output order is preserved.
   let lit = '';
+  // Autolink word-scan boundary: positions before this cannot start a
+  // bare URL/email (their run holds no @, no www., and no ':' after it).
+  let noAutoUntil = -1;
   const flush = () => { if (lit) { out += escapeHtml(lit); lit = ''; } };
   for (let i = 0; i < source.length;) {
     if (events.has(i)) { flush(); out += events.get(i).join(''); }
@@ -231,7 +238,21 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
     // available to the normal inline scanner. Bare-URL and email autolinks
     // are suppressed inside link text and while a raw <a> tag has left the
     // lexer in "inside a link" state; angle autolinks are not suppressed.
-    if (c !== '<' && !disableAutolinks && !linkDefinitions[IN_LINK] && autolinkStart.test(c)) {
+    if (c !== '<' && !disableAutolinks && !linkDefinitions[IN_LINK] && i >= noAutoUntil && autolinkStartChar(c)) {
+      // Word scan: a bare URL/email can only start in a run of autolink
+      // characters that contains www., or is followed by ':' (a scheme)
+      // or '@' (an email local part ends there — '@' itself is not in
+      // the run's character class, so it is the run's terminator). A run
+      // with none of those cannot start any autolink, so skip the regex
+      // for the whole run. Mid-word https:// still works: its run is
+      // 'https' and ':' follows it, so the regex still runs.
+      let j = i, hasWww = false;
+      while (j < source.length && autolinkStartChar(source[j])) {
+        if ((source.charCodeAt(j) | 32) === 119 && (source.charCodeAt(j + 1) | 32) === 119 && (source.charCodeAt(j + 2) | 32) === 119 && source[j + 3] === '.') hasWww = true;
+        j++;
+      }
+      if (!hasWww && source[j] !== ':' && source[j] !== '@') { noAutoUntil = j; }
+      else {
       autolinkRe.lastIndex = i;
       const candidate = autolinkRe.exec(source);
       if (candidate) {
@@ -300,6 +321,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           i += value.length; continue;
         }
         if (/^mailto:/i.test(candidate[0])) { flush(); out += escapeHtml(candidate[0]); i += candidate[0].length; continue; }
+      }
       }
     }
     // Code spans take precedence over bracket syntax and escape handling.
