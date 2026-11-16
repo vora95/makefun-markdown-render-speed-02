@@ -20,6 +20,11 @@ const autolinkRe = /(?:(?:https?|ftp):\/\/[^\s<>]+|www\.[^\s<>]+|[A-Za-z][A-Za-z
 // email local-part character). Positions starting with anything else can
 // never match, so the regex is not even attempted there.
 const autolinkStart = /[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]/;
+// marked's GFM autolink backpedal: repeatedly keep only the prefix this
+// matches. It drops trailing punctuation, trims an unmatched '(' (and
+// everything after it), keeps a balanced (group), and keeps a ']' or '}'
+// that a naive trailing-strip would remove.
+const autolinkBackpedal = /(?:[^?!.,:;*_'\"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'\"~)]+(?!$))+/;
 // attribute syntax: names of [A-Za-z_:][A-Za-z0-9_.:-]*, optionally
 // =value (quoted, or unquoted without whitespace or " ' = < > `). A tag
 // like <foo *bar* baz> or <foo https://x.com> is not a tag at all, so the
@@ -243,6 +248,16 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           const closerMark = marks.find(m => m.start === i + value.length && m.ch === '_' && m.usedClose > 0);
           if (afterEmail !== '_' || !closerMark) value = '';
         }
+        // Bare URLs take marked's backpedal (trailing punctuation, an
+        // unmatched '(' ends the URL, ']' and '}' are kept). Bare emails
+        // and mailto: keep the old stripping loop: marked matches those
+        // without backpedalling, and their mailto: trailing-slash rules
+        // live in that loop.
+        const isEmailValue = value.includes('@') && !/^[A-Za-z][A-Za-z0-9+.-]*:/i.test(value) && !/^www\./i.test(value);
+        if (!isEmailValue && !/^mailto:/i.test(value)) {
+          let prevBackpedal;
+          do { prevBackpedal = value; value = autolinkBackpedal.exec(value)?.[0] ?? ''; } while (value && value !== prevBackpedal);
+        } else {
         // GFM trailing punctuation is stripped in passes until the value is
         // stable: a closing paren can expose a dot, a star can expose a
         // dot, and so on (for example `nova).)` or `example.net.*`).
@@ -270,9 +285,15 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             value = value.slice(0, -1);
           }
         } while (value && value !== prevValue);
+        }
         if (value) {
-          const email = value.includes('@') && !/^[A-Za-z][A-Za-z0-9+.-]*:/i.test(value);
-          const href = (email ? 'mailto:' + value : /^www\./i.test(value) ? 'http://' + value : value).replace(/\\/g, '%5C').replace(/\]/g, '%5D');
+          const email = value.includes('@') && !/^[A-Za-z][A-Za-z0-9+.-]*:/i.test(value) && !/^www\./i.test(value);
+          const rawHref = email ? 'mailto:' + value : /^www\./i.test(value) ? 'http://' + value : value;
+          // marked percent-encodes autolink hrefs with encodeURI (']' ->
+          // %5D, '}' -> %7D, '"' -> %22, ...); fall back to the old
+          // replaces if the value is not a valid URI.
+          let href;
+          try { href = encodeURI(rawHref).replace(/%25/g, '%'); } catch { href = rawHref.replace(/\\/g, '%5C').replace(/\]/g, '%5D'); }
           flush(); out += `<a href="${escapeHtml(href)}">${escapeHtml(value)}</a>`;
           i += value.length; continue;
         }
