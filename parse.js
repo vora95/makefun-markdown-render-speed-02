@@ -479,7 +479,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       let htmlItems = listItems.map(linesInItem => {
         const task = linesInItem[0]?.match(/^\[([ xX])\][ \t]+(.*)$/);
         if (task) linesInItem[0] = task[2];
-        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, false, collectDefinitions).replace(/\n$/, '');
+        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
         if (!hasLooseItems && /^(?:<blockquote>|<ul>|<ol>)/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (!hasLooseItems && /^<h[1-6]>[\s\S]*<\/h[1-6]>$/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
