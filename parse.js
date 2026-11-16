@@ -538,7 +538,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
           if (itemFence) {
             const lead = blockLines[i].match(/^ */)[0].length;
-            const close = new RegExp('^ {0,3}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
+            const close = new RegExp('^ {0,' + (indent + 3) + '}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
             const validClose = close.test(blockLines[i]);
             if (validClose && lead >= indent) { body.push(itemContent(blockLines[i], indent)); itemFence = null; i++; continue; }
             if (validClose) {
@@ -568,7 +568,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             // A fence starts a new block in this item only at its content
             // indentation. A shallower fence closes the list before parsing.
             if (followingFence && blockLines[k].match(/^ */)[0].length < indent) break;
-            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; hasLooseItems = true; continue; }
+            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; const kLead = blockLines[k].match(/^ */)[0].length; const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); if (!(kLead >= indent && nestedAlready)) hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ {0,3}>/) && blockLines[k].match(/^ */)[0].length >= indent) { body.push(''); allLazyLead0 = true; i++; hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead > indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); allLazyLead0 = true; i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
             break;
