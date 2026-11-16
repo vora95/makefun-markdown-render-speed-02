@@ -445,7 +445,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
       const closeFence = new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
       while (j < blockLines.length && !closeFence.test(blockLines[j])) j++;
-      const body = rawLines.slice(i + 1, j).map(line => line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
+      const body = rawLines.slice(i + 1, j).map(line => fence[0] === '~' ? line : line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
       const language = lang.replace(/\\([\p{P}\p{S}])/gu, '$1');
       out.push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
