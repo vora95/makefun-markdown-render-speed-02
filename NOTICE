@@ -10,8 +10,8 @@ the MIT License. This fork preserves that attribution and is separately
 licensed under the MIT terms in LICENSE.
 
 The parser and driver in this repository contain original, independently
-written modifications by vora95 and contributors, including run-length-aware
-inline code handling, delimiter-aware inline parsing, block recognition and
-fence handling, and an independent batch driver. These files are not a copy of
-the upstream distribution. The upstream copyright and MIT attribution above
-are retained for the marked-derived work.
+written modifications by vora95 and contributors, including run-aware inline
+code and delimiter handling, link destination parsing, block and list
+recognition, fenced code collection, and an independent batch driver. These
+files are not a copy of the upstream distribution. The upstream copyright and
+MIT attribution above are retained for the marked-derived work.

@@ -147,6 +147,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
       let close = start, depth = 0;
       for (; close < source.length; close++) {
         if (source[close] === '\\') { close++; continue; }
+        if (source[close] === '<') { const tagEnd = source.indexOf('>', close + 1); if (tagEnd >= 0 && /^<\/?[A-Za-z][^<>]*>$/.test(source.slice(close, tagEnd + 1))) { close = tagEnd; continue; } }
         if (source[close] === '`') {
           let ticks = 1; while (source[close + ticks] === '`') ticks++;
           const codeEnd = matchingTickEnd(source, close + ticks, ticks);
@@ -162,20 +163,25 @@ function inline(source, linkDefinitions = Object.create(null)) {
         // text so the inner construct can be rendered on its own.
         const nestedLink = !image && /(?<!!)\[[^\]]*\]\([^\n)]*\)/.test(label);
         if (source[end] === '(') {
-          let p = end + 1; while (source[p] === ' ') p++;
+          let p = end + 1; while (/[ \t\n]/.test(source[p] || '')) p++;
           let raw = '', quoted = false, q = '';
           if (source[p] === '<') { const z = source.indexOf('>', p + 1), lineEnd = source.indexOf('\n', p + 1); if (z >= 0 && source[z - 1] !== '\\' && (lineEnd < 0 || z < lineEnd)) { raw = source.slice(p + 1, z); p = z + 1; } }
-          else { const b = p; let par = 0; while (p < source.length && (par || !/[\s)]/.test(source[p]))) { if (source[p] === '\\') { p += Math.min(2, source.length - p); continue; } if (source[p] === '(') par++; if (source[p] === ')') par--; p++; } raw = source.slice(b, p); }
-          while (source[p] === ' ') p++;
-          if (/['"(]/.test(source[p])) { q = source[p] === '(' ? ')' : source[p]; p++; const z = source.indexOf(q, p); if (z >= 0) { title = source.slice(p, z); p = z + 1; while (source[p] === ' ') p++; } }
-        if (source[p] === ')') { dest = cleanDestination(raw); end = p + 1; }
+          else { const b = p; let par = 0; while (p < source.length && (par || !/[ \t\n)]/.test(source[p]))) { if (source[p] === '\\') { p += Math.min(2, source.length - p); continue; } if (source[p] === '(') par++; if (source[p] === ')') par--; p++; } raw = source.slice(b, p); }
+          while (/[ \t\n]/.test(source[p] || '')) p++;
+          if (/['"(]/.test(source[p])) {
+            q = source[p] === '(' ? ')' : source[p]; p++;
+            let z = p;
+            while (z < source.length && (source[z] !== q || source[z - 1] === '\\')) z++;
+            if (z < source.length) { title = source.slice(p, z); p = z + 1; while (/[ \t\n]/.test(source[p] || '')) p++; }
+          }
+        if (source[p] === ')') { if (!raw && title) raw = source.slice(end + 1, p).trim(); dest = cleanDestination(raw); end = p + 1; }
         } else {
           let ref = label, p = end;
           if (source[p] === '[') { const z = source.indexOf(']', p + 1); if (z >= 0) { if (z > p + 1) ref = source.slice(p + 1, z); end = z + 1; } }
           const normalizedRef = ref.replace(/\\([\\()[\]])/g, '$1').trim().toLowerCase();
           const got = linkDefinitions[normalizedRef]; if (got) { dest = got.href; title = got.title || ''; }
         }
-        if (dest !== null && !nestedLink) { const alt = inline(label, linkDefinitions).replace(/<[^>]*>/g, ''); out += image ? `<img src="${escapeAttribute(dest)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(dest.replace(/ /g, '%20'))}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
+        if (dest !== null && !nestedLink) { const alt = inline(label, linkDefinitions).replace(/<[^>]*>/g, ''); const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
       }
     }
     if (c === '\\' && i + 1 < source.length) {
@@ -186,17 +192,25 @@ function inline(source, linkDefinitions = Object.create(null)) {
     // a double inner opener, then a triple closer. The final marker closes
     // the outer span while the first two close the inner one.
     if (c === '_' || c === '*') {
+      if (source[i - 1] === c) { out += c; i++; continue; }
       const mark = c;
       const escapedMark = mark === '*' ? '\\*' : '_';
       const closeRun = escapedMark.repeat(3);
-      if (mark === '*') {
+      if (mark === '_' && source.startsWith('__', i)) {
+        const odd = source.slice(i).match(/^__([^_\n]+)_([^_\n]+)_/);
+        if (odd) { out += `<em><em>${inline(odd[1], linkDefinitions)}</em>${inline(odd[2], linkDefinitions)}</em>`; i += odd[0].length; continue; }
+      }
+      let openerLength = 1; while (source[i + openerLength] === mark) openerLength++;
+      const before = source[i - 1] || '', after = source[i + openerLength] || '';
+      const specialCanOpen = !!after && !isWhitespace(after) && (!isPunctuation(after) || !before || isWhitespace(before) || isPunctuation(before));
+      if (mark === '*' && specialCanOpen) {
         const outerStrong = source.slice(i).match(/^\*\*([^*\n]+?)\*([^*\n]+?)\*\*\*/);
         if (outerStrong) {
           out += `<strong>${inline(outerStrong[1], linkDefinitions)}<em>${inline(outerStrong[2], linkDefinitions)}</em></strong>`;
           i += outerStrong[0].length; continue;
         }
       }
-      const nested = source.slice(i).match(new RegExp('^' + escapedMark + '([^' + mark + '\\n]+?)' + escapedMark.repeat(2) + '([^' + mark + '\\n]+?)' + closeRun));
+      const nested = specialCanOpen && source.slice(i).match(new RegExp('^' + escapedMark + '([^' + mark + '\\n]+?)' + escapedMark.repeat(2) + '([^' + mark + '\\n]+?)' + closeRun));
       if (nested) {
         out += `<em>${inline(nested[1], linkDefinitions)}<strong>${inline(nested[2], linkDefinitions)}</strong></em>`;
         i += nested[0].length; continue;
@@ -229,7 +243,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
         i = end + n; continue;
       }
     }
-    if (source.startsWith('**', i)) {
+    if (source.startsWith('**', i) && source[i + 2] && !isWhitespace(source[i + 2]) && !isPunctuation(source[i + 2])) {
       const end = source.indexOf('**', i + 2);
       if (end > i + 2 && !/\s/.test(source[i + 2]) && !/\s/.test(source[end - 1]) && (!source[i - 1] || /[\s\p{P}\p{S}]/u.test(source[i - 1]))) { out += `<strong>${inline(source.slice(i + 2, end), linkDefinitions)}</strong>`; i = end + 2; continue; }
     }
@@ -320,7 +334,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
       while (code.length && code[code.length - 1] === '') code.pop();
       out.push(`<pre><code>${escapeHtml(code.join('\n'))}${code.length ? '\n' : ''}</code></pre>\n`); continue;
     }
-    if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); body = body.replace(/[ \t]+#+[ \t]*$/, ''); out.push(`<h${d}>${inline(body, linkDefinitions)}</h${d}>\n`); i++; continue; }
+    if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); if (/^ {0,3}#{1,6}[ \t]+#+[ \t]*$/.test(blockLines[i])) body = ''; else body = body.replace(/[ \t]+#+[ \t]*$/, ''); out.push(`<h${d}>${inline(body, linkDefinitions)}</h${d}>\n`); i++; continue; }
     if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { out.push('<hr>\n'); i++; continue; }
     if ((m = blockLines[i].match(/^( {0,3})(`{3,}|~{3,})/)) && !(m[2][0] === '`' && blockLines[i].slice(m[0].length).includes('`'))) {
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
@@ -333,7 +347,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
       const q = []; while (i < blockLines.length && (m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) { q.push(m[1]); i++; }
       out.push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions)}</blockquote>\n`); continue;
     }
-    if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/))) {
+    if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/)) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) {
       const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
       const marker = m[1], markerIndent = blockLines[i].match(/^ */)[0].length;
       const markerPadding = blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0].length || 1;
@@ -342,6 +356,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
       const startNumber = ordered ? Number.parseInt(marker, 10) : 1;
       const listItems = []; let hasLooseItems = false;
       while (i < blockLines.length) {
+        if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
         const itemMatch = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/);
         if (!itemMatch || (ordered ? itemMatch[1].slice(-1) !== marker.slice(-1) : itemMatch[1] !== marker)) break;
         const itemIndent = blockLines[i].match(/^ */)[0].length;
@@ -349,9 +364,25 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
         const width = itemMatch[1].length + (padding > 4 ? 1 : padding);
         const indent = itemIndent + width;
         const body = [itemMatch[2] || '']; i++;
+        let itemFence = null;
+        const trackFence = line => {
+          if (itemFence) {
+            const close = new RegExp('^ {0,3}' + (itemFence[0] === '`' ? '`' : '~') + '{' + itemFence.length + ',}[ \\t]*$');
+            if (close.test(line)) itemFence = null;
+          } else {
+            const open = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+            if (open && !(open[1][0] === '`' && open[2].includes('`'))) itemFence = open[1];
+          }
+        };
+        trackFence(body[0]);
         while (i < blockLines.length) {
           const next = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+/);
           if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
+          if (itemFence) {
+            const lead = blockLines[i].match(/^ */)[0].length;
+            body.push(blockLines[i].slice(lead >= indent ? indent : 0));
+            trackFence(blockLines[i]); i++; continue;
+          }
           if (blank(blockLines[i])) {
             let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
             if (k >= blockLines.length) { i = k; break; }
@@ -361,8 +392,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
             break;
           }
           const lead = blockLines[i].match(/^ */)[0].length;
-          if (lead >= indent) body.push(blockLines[i].slice(indent));
-          else if (/^ {0,3}(?:>|#{1,6}[ \t]|```|~~~)/.test(blockLines[i])) body.push(blockLines[i].replace(/^ {0,3}/, ''));
+          if (lead >= indent) { body.push(blockLines[i].slice(indent)); trackFence(body[body.length - 1]); }
           else break;
           i++;
         }
@@ -373,10 +403,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
         if (task) linesInItem[0] = task[2];
         const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
+        if (!hasLooseItems && rendered === '<hr>') return `<li>${checkbox}<hr>\n</li>\n`;
         if (!hasLooseItems && /^<p>[\s\S]*<\/p>$/.test(rendered)) return `<li>${checkbox}${rendered.slice(3, -4)}</li>\n`;
         if (!hasLooseItems && /^<\/?[A-Za-z]/.test(rendered) && !rendered.includes('\n')) return `<li>${checkbox}${rendered}</li>\n`;
         if (!hasLooseItems && rendered.startsWith('<p>')) { const close = rendered.indexOf('</p>'); if (close >= 0) return `<li>${checkbox}${rendered.slice(3, close)}${rendered.slice(close + 5)}\n</li>\n`; }
-        if (hasLooseItems && rendered.startsWith('<p>')) return `<li>${checkbox}${rendered}\n</li>\n`;
+        if (hasLooseItems && rendered.startsWith('<p>')) return `<li><p>${checkbox}${rendered.slice(3)}\n</li>\n`;
         return `<li>${checkbox}${rendered ? '\n' + rendered + '\n' : ''}</li>\n`;
       }).join('');
       out.push(`<${tag}${ordered && startNumber !== 1 ? ` start="${startNumber}"` : ''}>\n${htmlItems}</${tag}>\n`); continue;
