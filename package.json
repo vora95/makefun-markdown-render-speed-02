@@ -3,7 +3,7 @@
   "name": "markdown-render-speed-02-entry",
   "version": "1.0.0",
   "private": true,
-  "description": "Dependency-free modified Markdown renderer",
+  "description": "Independently structured modified Markdown renderer",
   "license": "MIT",
   "exports": "./parse.js"
 }

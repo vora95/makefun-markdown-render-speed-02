@@ -37,7 +37,17 @@ function inline(source, linkDefinitions = Object.create(null)) {
       const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && canCloseSide;
       // A longer run that can also open belongs to a nested delimiter pair.
       if (canClose && canCloseSide && m > n) { j += m; continue; }
-      if (canClose && !ruleOf3Blocks) return { end: j, opener: n, closer: m };
+      if (canClose && !ruleOf3Blocks) {
+        // If this close completes a newer opener inside the current span,
+        // leave it for that opener and keep searching for the outer close.
+        let nested = -1;
+        for (let k = i + n; k < j; k++) if (s[k] === '*' && s[k - 1] !== '*') {
+          const q = findStarPair(s, k);
+          if (q && q.end === j) { nested = k; break; }
+        }
+        if (nested >= 0) { j += m; continue; }
+        return { end: j, opener: n, closer: m };
+      }
       j += m;
     }
     return null;
@@ -73,7 +83,15 @@ function inline(source, linkDefinitions = Object.create(null)) {
       const canClose = closeLeft && (!closeRight || isPunctuation(y));
       const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && closeRight;
       if (canClose && closeLeft && m > n) { j += m; continue; }
-      if (canClose && !ruleOf3Blocks) return { end: j, opener: n, closer: m };
+      if (canClose && !ruleOf3Blocks) {
+        let nested = -1;
+        for (let k = i + n; k < j; k++) if (s[k] === '_' && s[k - 1] !== '_') {
+          const q = findUnderscorePair(s, k);
+          if (q && q.end === j) { nested = k; break; }
+        }
+        if (nested >= 0) { j += m; continue; }
+        return { end: j, opener: n, closer: m };
+      }
       j += m;
     }
     return null;
@@ -178,10 +196,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
   const out = [];
   let i = 0;
   const blank = s => /^[ ]*$/.test(s);
-  const classifyHtmlLine = line => {
+  const realBlank = n => blank(blockLines[n] || '') && !(n === blockLines.length - 1 && src.endsWith('\n'));
+  const identifyHtmlBlock = line => {
     const s = line.replace(/^ {0,3}/, '');
     let m;
-    if ((m = s.match(/^<(pre|script|style|textarea)(?:\s|>|\/)/i))) return { type: 1, tag: m[1] };
+    if ((m = s.match(/^<(pre|script|style|textarea)(?=\s|>|\/|$)/i))) return { type: 1, tag: m[1] };
     if (/^<!--/.test(s)) return { type: 2 };
     if (/^<\?/.test(s)) return { type: 3 };
     if (/^<!\[CDATA\[/.test(s)) return { type: 5 };
@@ -203,16 +222,29 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
       out.push(html + '</table>\n'); continue;
     }
     // Block HTML is passed through verbatim by marked; its contents are not parsed.
-    if (classifyHtmlLine(blockLines[i])) {
-      const start = i; const html = classifyHtmlLine(blockLines[i]);
-      if (html.type <= 5) {
-        const end = html.type === 1 ? new RegExp(`<\\/${html.tag}\\s*>`, 'i') : html.type === 2 ? /-->/ : html.type === 3 ? /\?>/ : html.type === 4 ? />/ : /\]\]>/;
-        while (i < blockLines.length && !end.test(blockLines[i++])) {}
-      } else { while (i < blockLines.length && !blank(blockLines[i])) i++; }
-      // Comment blocks end at their closing delimiter. When the next block is a
-      // paragraph, marked joins the delimiter directly to the paragraph tag.
-      const endedComment = html.type === 2 && i > start && /-->\s*$/.test(blockLines[i - 1]);
-      out.push(blockLines.slice(start, i).join('\n') + (!endedComment && (i < blockLines.length || src.endsWith('\n')) ? '\n' : '')); continue;
+    if (identifyHtmlBlock(blockLines[i])) {
+      const start = i;
+      const kind = identifyHtmlBlock(blockLines[i]);
+      let stopReason = 'eof';
+      if (kind.type <= 5) {
+        const terminator = kind.type === 1 ? new RegExp(`<\\/${kind.tag}\\s*>`, 'i') : kind.type === 2 ? /-->/ : kind.type === 3 ? /\?>/ : kind.type === 4 ? />/ : /\]\]>/;
+        while (i < blockLines.length) {
+          const line = blockLines[i++];
+          if (terminator.test(line)) break;
+        }
+        if (i < blockLines.length && realBlank(i)) stopReason = 'blank';
+        else if (i < blockLines.length) stopReason = 'content';
+      } else {
+        while (i < blockLines.length && !realBlank(i)) i++;
+        stopReason = i < blockLines.length ? 'blank' : 'eof';
+      }
+      const pieces = blockLines.slice(start, i);
+      let raw = pieces.join('\n');
+      if (pieces.length && pieces[pieces.length - 1] !== '' && (i < blockLines.length || src.endsWith('\n'))) raw += '\n';
+      // The source's final separator belongs to the block only when it was
+      // followed immediately by content or the source ended there.
+      if (stopReason === 'blank' && raw.endsWith('\n')) raw = raw.slice(0, -1);
+      out.push(raw); continue;
     }
     // Indented code blocks are recognized before other block constructs.
     if (/^(?: {4,}|\t)/.test(blockLines[i])) {
@@ -280,6 +312,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
         const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
         if (!hasLooseItems && /^<p>[\s\S]*<\/p>$/.test(rendered)) return `<li>${checkbox}${rendered.slice(3, -4)}</li>\n`;
+        if (!hasLooseItems && /^<\/?[A-Za-z]/.test(rendered) && !rendered.includes('\n')) return `<li>${checkbox}${rendered}</li>\n`;
         if (!hasLooseItems && rendered.startsWith('<p>')) { const close = rendered.indexOf('</p>'); if (close >= 0) return `<li>${checkbox}${rendered.slice(3, close)}${rendered.slice(close + 5)}\n</li>\n`; }
         if (hasLooseItems && rendered.startsWith('<p>')) return `<li>${checkbox}${rendered}\n</li>\n`;
         return `<li>${checkbox}${rendered ? '\n' + rendered + '\n' : ''}</li>\n`;
@@ -288,7 +321,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
     }
     if (i + 1 < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[i + 1])) { const d = blockLines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(blockLines[i].trim(), linkDefinitions)}</h${d}>\n`); i += 2; continue; }
     let j = i + 1;
-    while (j < blockLines.length && !blank(blockLines[j]) && !(classifyHtmlLine(blockLines[j]) && classifyHtmlLine(blockLines[j]).type <= 6) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
+    while (j < blockLines.length && !blank(blockLines[j]) && !(identifyHtmlBlock(blockLines[j]) && identifyHtmlBlock(blockLines[j]).type <= 6) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
     out.push(`<p>${inline(blockLines.slice(i, j).join('\n'), linkDefinitions)}</p>\n`); i = j;
   }
   return out.join('');

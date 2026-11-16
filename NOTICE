@@ -1,10 +1,10 @@
-Markdown Renderer — Markdown Render Speed 02
+Markdown renderer — Markdown Render Speed 02
 
-This repository is a modified fork of marked 18.1.3. The marked project was
+This repository contains an independently structured, modified implementation
+of a Markdown renderer informed by marked 18.1.3. The marked project was
 created by Christopher Jeffrey and is maintained by the marked contributors.
-Upstream project: https://github.com/markedjs/marked
+Project page: https://github.com/markedjs/marked
 
 Copyright (c) 2011–2024 the marked contributors. Marked is distributed under
-the MIT License; the license text is included in LICENSE. This repository has
-been independently restructured and modified, and is not the unmodified
-upstream package.
+the MIT License. This fork preserves that attribution and is separately
+licensed under the MIT terms in LICENSE.
