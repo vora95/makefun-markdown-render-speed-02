@@ -1,0 +1,3 @@
+This project is a modified fork of marked 18.1.3, an MIT-licensed Markdown parser originally copyright (c) 2011-2024 the marked contributors. Upstream project: https://github.com/markedjs/marked.
+
+The renderer here has been restructured and modified for faster Markdown rendering. Any portions derived from marked remain available under marked's MIT License; see LICENSE for the license text.
