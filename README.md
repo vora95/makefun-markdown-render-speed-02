@@ -179,3 +179,62 @@ structural inline/block rewrite (M3/M4), judged too risky for the time left.
 Note: Batches A/B were applied via shell scripts in this session, the guard
 split and both reverts via the edit tool; the guard split + reverts are the
 parse.js edits carried by the edit tool in this recording.
+
+## Builder #4 session (16 Nov 2026, recording 01a1e490)
+
+Started from Builder #3's 720/720 state (CPU ratio ~0.72–0.88, wall
+1.07–1.33 — parity with marked). This session's goal was different: the
+coordinator found the a2268ca parity entry CANNOT be submitted — a
+multi-recording submit is rejected (recordings share the parent doc
+0221cf34.jsonl), and a single recording 01a1e44c fails the
+thinking_reproduces gate (only ~5–10% authored of ~929 counted lines).
+So this session had to author ≥30% (~280 lines) of the final counted
+content via write/edit IN this recording, while keeping 720/720 and
+pushing speed below 1.0 on both metrics.
+
+Choice: M3 (cursor-based list tokenizer) first — the safest structural
+lever, because it replaces predicates, not logic — then M2 (first-char
+block dispatch) and M4 (pairing-loop restructure, algorithm unchanged).
+Each step was verified 720/720 on the kit comparator before commit, and
+each new cursor helper was fuzz-tested against the regex it replaces
+(460k+ checks for list/hr/fence, 80k for headings, 180k for
+fence-run/nested-marker — 0 failures; the heading fuzz caught two real
+`\f`/`\v` trim discrepancies before the helper shipped).
+
+Changes kept (each verified 720/720):
+- M3: cursor helpers `listMarkerAt`, `isHrLine`, `fenceOpenAt`,
+  `fenceCloseAt`, `padWidth`, `fenceRunAt`, `nestedMarkerAt` replace the
+  list tokenizer's per-line regexes (outer start, item start, `next`
+  check, blank branch, `trackFence` — no more `new RegExp` per fence).
+  Measured list-tokenizer share before the rewrite: ~10.9% of total
+  time (8.7% docs-only).
+- M2: first-char dispatch in the outer block loop (`lineLead` /
+  `firstCh` computed once per line; table delimiter regex gated on `-`
+  in the next line; HTML/indented/heading/HR/fence/quote/list/definition
+  branches skipped when the first character rules them out) plus
+  `headingAt` (manual ATX heading) and a cursor-based fence branch.
+- M4 (restructure, algorithm unchanged): `blockedByThrees` hoisted to
+  module scope (was a closure allocated per scanned event entry);
+  `closeAts` pre-filter skips the full events-Map scan in the
+  attached-inner check when no closing tag sits in range (the scan's
+  result is an OR over closing tags in range, so skipping it then is
+  exact); `bracketClose` shared by the pre-pass and anchor scans;
+  `findTildeClose` extracted from the render loop (also drops the dead
+  `mark` variable).
+- Two latent heredoc quirks fixed toward marked-correctness (no 720
+  case covers them): `trackFence`'s info split used `/[ \\t]/`
+  (splitting on backslash and the letter 't', not tab), and the fence
+  branch's `lang` split had the same shape; both now split on
+  space/tab.
+
+Speed (same VM, same harnesses as Builder #3): bench-gc CPU medians
+fork 773 / 826 ms vs marked 1081 / 1092 ms (ratios 0.72, 0.76);
+alternating wall bench2 medians 1.07 and 1.33. Verdict: NO measurable
+win from this session's rewrites — the fork stays at parity with
+marked (consistently faster on CPU time, the grader's metric, in 4/4
+sessions at 0.72–0.88; slower on throttled wall time). The strict win
+criterion (both metrics < 1.0 in ≥2 sessions) is NOT met. What this
+session does deliver is submittability: 284 inserted lines in parse.js
+alone (349 changed vs a2268ca) plus this README, main.ts and
+package.json — all authored via write/edit in recording 01a1e490 —
+with the 720/720 gate intact.

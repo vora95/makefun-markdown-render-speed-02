@@ -10,6 +10,9 @@
 // fork at 720/720 on the kit comparator; this entry point is unchanged.
 // Builder #3 session (16 Nov 2026, recording 01a1e44c): `parse` further tuned
 // (guard split, closure hoisting, pre-pass skips); still 720/720, entry point unchanged.
+// Builder #4 session (16 Nov 2026, recording 01a1e490): `parse` restructured
+// (M3 cursor list tokenizer, M2 first-char block dispatch, M4 pairing-loop
+// restructure); still 720/720, entry point unchanged.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse } from './parse.js';
