@@ -32,4 +32,5 @@ boundaries, blockquote recognition, and autolink URL encoding in independently
 authored parser code.
 
 The repository also carries independent compatibility changes for the practice
-document set; these changes retain the upstream attribution above.
+document set, including list-item fence boundary handling; these changes retain
+the upstream attribution above.

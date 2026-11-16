@@ -402,6 +402,21 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
           if (itemFence) {
             const lead = blockLines[i].match(/^ */)[0].length;
+            const close = new RegExp('^ {0,3}' + (itemFence[0] === '`' ? '`' : '~') + '{' + itemFence.length + ',}[ \\t]*$');
+            if (close.test(blockLines[i])) { body.push(blockLines[i]); trackFence(blockLines[i]); i++; continue; }
+            // A fenced block belongs to its list item. An unindented
+            // nonblank line ends that item, even while the fence is open;
+            // leave the line for the enclosing block parser.
+            if (!blank(blockLines[i]) && lead < indent) {
+              // A fence closed at the item's marker column still owns its
+              // intervening source lines, including unindented code.
+              let closesAtItemLevel = false;
+              for (let k = i + 1; k < blockLines.length; k++) {
+                const closeLead = blockLines[k].match(/^ */)[0].length;
+                if (close.test(blockLines[k])) { closesAtItemLevel = closeLead <= itemIndent; break; }
+              }
+              if (!closesAtItemLevel) break;
+            }
             body.push(blockLines[i].slice(lead >= indent ? indent : 0));
             trackFence(blockLines[i]); i++; continue;
           }

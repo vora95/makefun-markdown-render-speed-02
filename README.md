@@ -22,3 +22,5 @@ implementation is informed by marked 18.1.3; upstream credit is in
 
 The block renderer retains the source indentation of each fence opener while
 collecting its body, so code content is emitted without inline interpretation.
+Within a list item, fence collection tracks item boundaries and preserves
+unindented code when a fence closes at the item's marker column.
