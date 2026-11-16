@@ -271,7 +271,14 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         if (source[close] === '`') {
           let ticks = 1; while (source[close + ticks] === '`') ticks++;
           const codeEnd = matchingTickEnd(source, close + ticks, ticks);
-          if (codeEnd >= 0) { let d = depth, bad = false; if (ticks >= 2) { for (let q = close + 1; q < codeEnd; q++) { if (source[q] === '\\') { q++; continue; } if (source[q] === '[') d++; else if (source[q] === ']') { if (d === 0) { const after = source[q + 1]; if (after === '(' || after === '[') { bad = true; break; } } else d--; } } } if (!bad) { close = codeEnd + ticks - 1; continue; } }
+          if (codeEnd >= 0) { let d = depth, bad = false; if (ticks >= 2) { for (let q = close + 1; q < codeEnd; q++) { if (source[q] === '\\') { q++; continue; } if (source[q] === '[') d++; else if (source[q] === ']') { if (d === 0) { const after = source[q + 1]; if (after === '(' || after === '[') { bad = true; break; } } else d--; } } }
+            // A ticks>=2 code span whose content holds a backtick blocks the
+            // link unless the span is immediately followed by the label's
+            // closing ] (marked: the label then fails to form). Only for a
+            // genuine in-label span (not bad: a span spanning a ](/ [ is
+            // not in-label, so it does not block).
+            if (!bad && ticks >= 2) { let hasTick = false; for (let q = close + ticks; q < codeEnd; q++) if (source[q] === '`') { hasTick = true; break; } if (hasTick && !(depth === 0 && source[codeEnd + ticks] === ']')) { close = source.length; break; } }
+            if (!bad) { close = codeEnd + ticks - 1; continue; } }
           else if (ticks === 1) { close = source.length; break; }
         }
         if (source[close] === '[') depth++;
