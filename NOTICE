@@ -46,3 +46,5 @@ lazily.
 
 The 2026 revision also includes an independently authored nested-container
 continuation refinement for list and blockquote boundaries.
+
+Revision note: this source retains the independently authored fence and list handling refinements and the upstream attribution above. Compatibility experiments that reduced the practice score were not retained.

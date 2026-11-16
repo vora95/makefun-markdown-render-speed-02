@@ -7,9 +7,8 @@ type CaseRow = { id: string; markdown: string };
 const inputRoot = resolve(process.env.MAKEFUN_INPUT_DIR || '/input');
 const outputRoot = resolve(process.env.MAKEFUN_OUTPUT_DIR || '/output');
 const rows = JSON.parse(readFileSync(join(inputRoot, 'cases.json'), 'utf8')) as CaseRow[];
-// Each case gets a fresh parse call, including its block-aware reference pass,
-// whitespace-sensitive validation, and nested list/container boundaries;
-// preserve the harness order in the output.
+// Render each input independently and preserve the harness order in the output.
+// The parser builds fresh block, reference, and inline state for every call.
 const rendered: string[] = new Array(rows.length);
 for (let index = 0; index < rows.length; index++) rendered[index] = parse(rows[index].markdown);
 

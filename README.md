@@ -33,3 +33,6 @@ Block starts below an item's content indentation end that item; ordinary text
 can still continue a paragraph lazily. Fence collection checks valid closers
 before container boundaries, and fence bodies are dedented relative to their
 opener.
+
+
+The current verified revision remains compatible with all 680 CommonMark and GFM examples in the practice set. Generated documents still expose unresolved list-boundary and inline parsing differences; fence-dedent experiments were reverted when they reduced compatibility.
