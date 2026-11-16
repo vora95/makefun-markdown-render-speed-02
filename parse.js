@@ -623,10 +623,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         if (!hasLooseItems && rendered.startsWith('<pre>')) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (!hasLooseItems && rendered.startsWith('<p>') && rendered.endsWith('</p>') && rendered.includes('</p>\n<p>')) { const inner = rendered.slice(3, -4).replace(/<\/p>\n<p>/g, '\n\n'); return `<li>${checkbox}${inner}</li>\n`; }
         if (!hasLooseItems && /^<p>[\s\S]*<\/p>$/.test(rendered)) return `<li>${checkbox}${rendered.slice(3, -4)}</li>\n`;
-        if (!hasLooseItems && /^<\/?[A-Za-z]/.test(rendered) && !rendered.includes('\n')) return `<li>${checkbox}${rendered}</li>\n`;
+        if (!hasLooseItems && /^<\/?[A-Za-z!]/.test(rendered) && !/\n<\/?(?:p|ul|ol|blockquote|pre|h[1-6]|table|hr)/.test(rendered)) return `<li>${checkbox}${rendered}</li>\n`;
         if (!hasLooseItems && rendered.startsWith('<p>')) { const close = rendered.indexOf('</p>'); if (close >= 0) return `<li>${checkbox}${rendered.slice(3, close)}${rendered.slice(close + 5)}\n</li>\n`; }
         if (rendered.startsWith('<pre>')) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (hasLooseItems && rendered.startsWith('<p>')) return `<li><p>${checkbox}${rendered.slice(3)}\n</li>\n`;
+        if (hasLooseItems && /^<\/?[A-Za-z!]/.test(rendered) && !/\n<\/?(?:p|ul|ol|blockquote|pre|h[1-6]|table|hr)/.test(rendered)) return rendered.includes('<p>') ? `<li>${checkbox}${rendered}\n</li>\n` : `<li>${checkbox}${rendered}</li>\n`;
         return `<li>${checkbox}${rendered ? '\n' + rendered + '\n' : ''}</li>\n`;
       }).join('');
       if (!hasLooseItems) htmlItems = htmlItems.replace(/<li>\n(?=<(?:blockquote|ul|ol)>)/g, '<li>');
