@@ -59,23 +59,6 @@ function matchingTickEnd(s, from, count) {
   return -1;
 }
 
-function hasShortTickInsideSpan(s) {
-  for (let p = 0; p < s.length;) {
-    if (s[p] !== '`') { p++; continue; }
-    let n = 1; while (s[p + n] === '`') n++;
-    const end = matchingTickEnd(s, p + n, n);
-    if (end < 0) { p += n; continue; }
-    for (let q = p + n; q < end;) {
-      if (s[q] !== '`') { q++; continue; }
-      let run = 1; while (s[q + run] === '`') run++;
-      if (run < n) return true;
-      q += run;
-    }
-    p = end + n;
-  }
-  return false;
-}
-
 function inline(source, linkDefinitions = Object.create(null), disableAutolinks = false) {
   // Plain prose can be escaped in one pass without building delimiter and
   // link state. Keep URL and email starters in the guard because GFM scans
@@ -279,7 +262,8 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           for (let bi = 0; bi < label.length && !nestedLink; bi++) {
             const bch = label[bi];
             if (bch === '`') { let n = 1; while (label[bi + n] === '`') n++; const ce = matchingTickEnd(label, bi + n, n); bi = ce >= 0 ? ce + n - 1 : bi + n - 1; continue; }
-            if (bch !== '[' || (bi && label[bi - 1] === '!')) continue;
+            if (bch !== '[') continue;
+            if (bi && label[bi - 1] === '!') { let cb2 = bi + 1; while (cb2 < label.length && label[cb2] !== ']') { if (label[cb2] === '\\') cb2++; cb2++; } if (cb2 < label.length) { const afterImg = label[cb2 + 1]; if (afterImg === '[') { let cb3 = cb2 + 2; while (cb3 < label.length && label[cb3] !== ']') { if (label[cb3] === '\\') cb3++; cb3++; } bi = cb3; } else if (afterImg === '(') { let par = 1, cb3 = cb2 + 2; while (cb3 < label.length && par) { if (label[cb3] === '\\') { cb3 += 2; continue; } if (label[cb3] === '(') par++; if (label[cb3] === ')') par--; cb3++; } bi = cb3 - 1; } else bi = cb2; } continue; }
             let cb = bi + 1;
             while (cb < label.length && label[cb] !== ']') { if (label[cb] === '\\') cb++; cb++; }
             if (cb >= label.length) continue;
@@ -308,9 +292,9 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           const normalizedRef = ref.replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
           const got = linkDefinitions[normalizedRef]; if (got) { dest = got.href; title = got.title || ''; }
         }
-        if (dest !== null && !nestedLink && !hasShortTickInsideSpan(label)) { const savedInLink = linkDefinitions[IN_LINK]; const altSource = label.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); const alt = inline(altSource, linkDefinitions, true).replace(/<[^>]*>/g, ''); const labelHtml = image ? '' : inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
+        if (dest !== null && !nestedLink) { const savedInLink = linkDefinitions[IN_LINK]; const altSource = label.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); const alt = inline(altSource, linkDefinitions, true).replace(/<[^>]*>/g, ''); const labelHtml = image ? '' : inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
       if (dest === null && source[end] === '(') { const ref = label.replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); const fallback = linkDefinitions[ref]; if (fallback) { dest = fallback.href; title = fallback.title || ''; end = close + 1; } }
-      if (dest !== null && !nestedLink && !hasShortTickInsideSpan(label)) { const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); const savedInLink = linkDefinitions[IN_LINK]; const labelHtml = inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; out += `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
+      if (dest !== null && !nestedLink) { const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); const savedInLink = linkDefinitions[IN_LINK]; const labelHtml = inline(label, linkDefinitions, true); linkDefinitions[IN_LINK] = savedInLink; out += `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${labelHtml}</a>`; i = end; continue; }
       }
     }
     if (c === '\\' && i + 1 < source.length) {
