@@ -26,5 +26,7 @@ flanking and run-of-three checks, and emits paired tags while preserving unused
 markers. This implementation remains a modified fork and does not include the
 upstream parser distribution.
 
-
-This revision also adjusts HTML block separators, list looseness, and autolink URL encoding in independently authored parser code.
+This revision also adjusts HTML block separators, table body rows (including
+empty cells and rows without pipe separators), list looseness, fenced block
+boundaries, blockquote recognition, and autolink URL encoding in independently
+authored parser code.

@@ -10,10 +10,12 @@ paths default to `/input` and `/output` and can be changed for local use with
 `MAKEFUN_INPUT_DIR` and `MAKEFUN_OUTPUT_DIR`.
 
 The parser has independent scanners for block structure, lists, quotes, fences,
-and inline tokens. HTML block endings preserve whitespace-only following lines
-after self-terminating constructs, while tag blocks trim those separators. Bare
-and angle autolinks percent-encode backslashes in their destinations. Its inline pass pairs emphasis delimiter runs, parses links
-and images, and handles entities, raw tags, and GFM autolinks. The practice
-comparison reports compatibility by CommonMark/GFM section and generated
-document. The implementation is informed by marked 18.1.3; upstream credit is
-in [NOTICE](NOTICE), and the MIT terms are in [LICENSE](LICENSE).
+and inline tokens. Table bodies preserve blank cells and accept body rows that
+omit pipe separators. HTML block endings preserve whitespace-only following
+lines after self-terminating constructs, while tag blocks trim those separators.
+Bare and angle autolinks percent-encode backslashes in their destinations. The
+inline pass pairs emphasis delimiter runs, parses links and images, and handles
+entities, raw tags, and GFM autolinks. The practice comparison reports
+compatibility by CommonMark/GFM section and generated document. The
+implementation is informed by marked 18.1.3; upstream credit is in
+[NOTICE](NOTICE), and the MIT terms are in [LICENSE](LICENSE).

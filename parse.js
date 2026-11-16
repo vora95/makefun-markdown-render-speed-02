@@ -268,7 +268,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const heads = split(blockLines[i]), aligns = split(blockLines[i + 1]).map(c => c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : '');
       const row = (cells, tag) => `<tr>\n${heads.map((_, n) => { const a = aligns[n]; return `<${tag}${a ? ` align="${a}"` : ''}>${inline(cells[n] || '', linkDefinitions)}</${tag}>\n`; }).join('')}</tr>\n`;
       let html = '<table>\n<thead>\n' + row(heads, 'th') + '</thead>\n'; i += 2;
-      if (i < blockLines.length && !blank(blockLines[i]) && blockLines[i].includes('|')) { html += '<tbody>'; while (i < blockLines.length && !blank(blockLines[i]) && !/^ {0,3}(?:>|#{1,6}(?:\s|$)|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[i])) html += row(split(blockLines[i++]), 'td'); html += '</tbody>'; }
+      if (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t'))) { html += '<tbody>'; while (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t')) && !/^ {0,3}(?:>|#{1,6}(?:\s|$)|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[i])) html += row(split(blockLines[i++]), 'td'); html += '</tbody>'; }
       out.push(html + '</table>\n'); continue;
     }
     // Block HTML is passed through verbatim by marked; its contents are not parsed.
@@ -323,8 +323,9 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const language = lang.replace(/\\([\p{P}\p{S}])/gu, '$1');
       out.push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
-    if ((m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) {
-      const q = []; let quoteFence = false; while (i < blockLines.length && (m = blockLines[i].match(/^ {0,3}>(?: ?)(.*)$/))) {
+    const quoteLine = line => line.match(nestedContext ? /^ {0,6}>(?: ?)(.*)$/ : /^ {0,3}>(?: ?)(.*)$/);
+    if ((m = quoteLine(blockLines[i]))) {
+      const q = []; let quoteFence = false; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
         if (content.includes('\t')) { let col=1,expanded=''; for(const ch of content){if(ch==='\t'){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{expanded+=ch;col++;}} content=expanded.startsWith(' ')?expanded.slice(1):expanded; }
         if (content === ' ' && q.some(line=>line.trim())) content='\u0001';
@@ -336,7 +337,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       // began inside the quote and the line does not start a new block.
       const interrupt = line => /^(?: {4,}|\t)|^ {0,3}(?:#{1,6}(?:\s|$)|```|~~~|(?:[-+*]|1[.)])[ \t]|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(line);
       while(i<blockLines.length && !quoteFence && !blank(blockLines[i]) && q.length && q.at(-1).trim() && (!interrupt(q.at(-1)) || /^ {0,3}\d{1,9}[.)][ \t]+>/.test(q.at(-1))) && !/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(q.at(-1))) {
-        const nextQuote=blockLines[i].match(/^ {0,3}> ?(.*)$/);
+        const nextQuote=quoteLine(blockLines[i]);
         if(nextQuote){q.push(nextQuote[1]);i++;continue;}
         const lazyIndentedList=/^ {4,}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[i]);
         if(interrupt(blockLines[i]) && !lazyIndentedList) break;
@@ -395,6 +396,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             }
             let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
             if (k >= blockLines.length) { i = k; break; }
+            const followingFence = blockLines[k].match(/^ *(?:`{3,}|~{3,})/);
+            if (followingFence && blockLines[k].match(/^ */)[0].length <= itemIndent) break;
             if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); i++; hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ {0,3}>/)) { body.push(''); i++; hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead > indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); i++; if (!nestedMarker && (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
