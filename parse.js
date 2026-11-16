@@ -434,7 +434,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const heads = split(blockLines[i]), aligns = split(blockLines[i + 1]).map(c => c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : '');
       const row = (cells, tag) => `<tr>\n${heads.map((_, n) => { const a = aligns[n]; return `<${tag}${a ? ` align="${a}"` : ''}>${inline(cells[n] || '', linkDefinitions)}</${tag}>\n`; }).join('')}</tr>\n`;
       let html = '<table>\n<thead>\n' + row(heads, 'th') + '</thead>\n'; i += 2;
-      if (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t'))) { html += '<tbody>'; while (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t')) && !/^ {0,3}(?:>|#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[i]) && !isFenceStart(blockLines[i])) html += row(split(blockLines[i++]), 'td'); html += '</tbody>'; }
+      if (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t'))) { html += '<tbody>'; while (i < blockLines.length && (!blank(blockLines[i]) || rawLines[i]?.includes('\t')) && !/^ {0,3}(?:>|#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[i]) && !isFenceStart(blockLines[i]) && !(identifyHtmlBlock(blockLines[i]) && identifyHtmlBlock(blockLines[i]).type <= 6)) html += row(split(blockLines[i++]), 'td'); html += '</tbody>'; }
       out.push(html + '</table>\n'); continue;
     }
     // Block HTML is passed through verbatim by marked; its contents are not parsed.
