@@ -265,11 +265,13 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         // Markdown forbids an anchor from containing another anchor. If a
         // completed link occurs in this label, leave this opening bracket as
         // text so the inner construct can be rendered on its own.
-        let nestedLink = !image && /(?<!!)\[[^\]]*\](?:\([^\n)]*\)|\[[^\]]*\])/.test(label);
+        let nestedLink = !image && /(?<!!)\[[^\]]*\]\([^\n)]*\)/.test(label);
         if (!nestedLink && !image) {
           // A shortcut reference link inside the label also blocks the
           // outer link, but only when the bracketed text actually resolves
           // to a defined reference (an undefined [text] is plain text).
+          // The same applies to full/collapsed refs [text][ref] / [text][]:
+          // they block only when the referenced key is defined.
           // Code spans in the label do not count as links.
           for (let bi = 0; bi < label.length && !nestedLink; bi++) {
             const bch = label[bi];
@@ -280,7 +282,8 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             while (cb < label.length && label[cb] !== ']') { if (label[cb] === '\\') cb++; cb++; }
             if (cb >= label.length) continue;
             const after = label[cb + 1];
-            if (after === '(' || after === '[') continue;
+            if (after === '(') continue;
+            if (after === '[') { let cb2 = cb + 2; while (cb2 < label.length && label[cb2] !== ']') { if (label[cb2] === '\\') cb2++; cb2++; } if (cb2 < label.length) { const refText = label.slice(cb + 2, cb2); const key = (refText || label.slice(bi + 1, cb)).replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) nestedLink = true; bi = cb2; } continue; }
             const key = label.slice(bi + 1, cb).replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
             if (key && linkDefinitions[key]) nestedLink = true;
           }
