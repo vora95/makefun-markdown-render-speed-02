@@ -37,3 +37,5 @@ authored parser code.
 The repository also carries independent compatibility changes for the practice
 document set, including list-item fence boundary handling and run-aware
 emphasis pairing; these changes retain the upstream attribution above.
+
+This revision also includes independently authored reference-definition validation that rejects an attached title without separator whitespace.

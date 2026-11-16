@@ -488,8 +488,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     if (definitionStart && definitionStart[1].trim() && !/(^|[^\\])\[/.test(definitionStart[1])) {
       const rawLabel = definitionStart[1]; let rest = definitionStart[2], consumedLines = 1;
       if (!rest.trim() && i + 1 < blockLines.length && /^\s*\S/.test(blockLines[i + 1])) { rest = blockLines[i + 1].trim(); consumedLines++; }
-      const destination = rest.match(/^(?:<([^>\n]*)>|(\S+))(?:[ \t]+(?:"([^"\n]*)"|'([^'\n]*)'|\(([^)\n]*)\)))?[ \t]*$/);
+      const destination = rest.match(/^(?:<([^>\n]*)>|(?!<)(\S+))(?:[ \t]+(?:"([^"\n]*)"|'([^'\n]*)'|\(([^)\n]*)\)))?[ \t]*$/);
       if (destination) {
+        const attachedTitle = destination[3] !== undefined || destination[4] !== undefined || destination[5] !== undefined;
+        const rawDestination = rest.match(/^(?:<[^>\n]*>|\S+)/)?.[0] || '';
+        if (attachedTitle && rest[rawDestination.length] && !/[ \t\n]/.test(rest[rawDestination.length])) { i++; continue; }
         let title = destination[3] ?? destination[4] ?? destination[5] ?? '';
         if (!title && i + consumedLines < blockLines.length) {
           const titleLine = blockLines[i + consumedLines].match(/^\s*(?:"([^"\n]*)"|'([^'\n]*)'|\(([^)\n]*)\))[ \t]*$/);
@@ -507,7 +510,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     while (j < blockLines.length && !blank(blockLines[j]) && !/^ {0,3}(?:=+|-+)[ \t]*$/.test(blockLines[j]) && !(identifyHtmlBlock(blockLines[j]) && identifyHtmlBlock(blockLines[j]).type <= 6) && !new RegExp('^ {0,3}(?:#{1,6}(?:\\s|$)|>|```|~~~|' + paragraphListMarker + '[ \\t])').test(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
     if (j < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[j])) { const d=blockLines[j].trim()[0]==='='?1:2; out.push(`<h${d}>${inline(blockLines.slice(i,j).join('\n').trim(),linkDefinitions)}</h${d}>\n`); i=j+1; continue; }
     let paragraph = blockLines.slice(i, j).join('\n');
-    const definitionPattern = /^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(?:<([^>\n]*)>|(?!<)(\S+))(?:(?:[ \t]+|[ \t]*\n[ \t]*)(?:"((?:(?!\n[ \t]*\n)[\s\S])*?)"|'((?:(?!\n[ \t]*\n)[\s\S])*?)'|\((.*)\)))?[ \t]*(?:\n|$)/;
+    const definitionPattern = /^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(?:<([^>\n]*)>|(?!<)(\S+))(?:(?:[ \t]+|\n[ \t]*)(?:"((?:(?!\n[ \t]*\n)[\s\S])*?)"|'((?:(?!\n[ \t]*\n)[\s\S])*?)'|\((.*)\)))?[ \t]*(?:\n|$)/;
     while (paragraph) {
       const definition = definitionPattern.exec(paragraph);
       if (!definition || definition.index !== 0) break;

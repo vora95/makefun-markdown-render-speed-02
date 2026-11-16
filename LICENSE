@@ -50,3 +50,6 @@ SOFTWARE.
 This fork includes independently authored compatibility updates for generated
 Markdown documents, including list-item fence boundary handling and run-aware
 emphasis delimiter pairing, and retains the license terms above.
+
+
+The parser includes original compatibility changes for reference-definition destination and title separation.

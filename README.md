@@ -11,8 +11,9 @@ paths default to `/input` and `/output` and can be changed for local use with
 
 The parser has independent scanners for block structure, lists, quotes, fences,
 and inline tokens. Reference definitions are collected from parsed paragraph
-blocks before rendering, so definitions inside code and HTML blocks stay literal
-while forward references continue to resolve. Table bodies preserve blank cells and accept body rows that
+blocks before rendering, with destination/title separation checked before a label
+is registered. Definitions inside code and HTML blocks stay literal while forward
+references continue to resolve. Table bodies preserve blank cells and accept body rows that
 omit pipe separators. HTML block endings preserve whitespace-only following
 lines after self-terminating constructs, while tag blocks trim those separators.
 Bare and angle autolinks percent-encode backslashes in their destinations. The
@@ -24,6 +25,7 @@ implementation is informed by marked 18.1.3; upstream credit is in
 
 The block renderer retains the source indentation of each fence opener while
 collecting its body, so code content is emitted without inline interpretation.
+List looseness follows blank separators tracked while gathering item content.
 Within a list item, fence collection checks valid closers before container
 boundaries. A dedented non-closer ends the item unless a later closer returns
 to the marker column; the remaining lines are parsed by the enclosing block
