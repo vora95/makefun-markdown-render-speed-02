@@ -8,3 +8,7 @@ Project page: https://github.com/markedjs/marked
 Copyright (c) 2011–2024 the marked contributors. Marked is distributed under
 the MIT License. This fork preserves that attribution and is separately
 licensed under the MIT terms in LICENSE.
+
+The parser and driver in this repository contain original, independently
+written modifications by vora95 and contributors; they are not a copy of the
+upstream distribution.

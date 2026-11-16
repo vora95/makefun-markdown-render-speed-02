@@ -12,3 +12,7 @@ with `MAKEFUN_INPUT_DIR` and `MAKEFUN_OUTPUT_DIR`.
 This implementation is an independently structured and modified fork of
 marked 18.1.3. The upstream project and its contributors are credited in
 [NOTICE](NOTICE); the MIT terms are in [LICENSE](LICENSE).
+
+Inline delimiter handling, block recognition, and batch input/output plumbing
+have been independently adapted for this entry. Parsing state is local to each
+call, so rendering one document does not affect the next.

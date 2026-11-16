@@ -161,6 +161,13 @@ function inline(source, linkDefinitions = Object.create(null)) {
       const mark = c;
       const escapedMark = mark === '*' ? '\\*' : '_';
       const closeRun = escapedMark.repeat(3);
+      if (mark === '*') {
+        const outerStrong = source.slice(i).match(/^\*\*([^*\n]+?)\*([^*\n]+?)\*\*\*/);
+        if (outerStrong) {
+          out += `<strong>${inline(outerStrong[1], linkDefinitions)}<em>${inline(outerStrong[2], linkDefinitions)}</em></strong>`;
+          i += outerStrong[0].length; continue;
+        }
+      }
       const nested = source.slice(i).match(new RegExp('^' + escapedMark + '([^' + mark + '\\n]+?)' + escapedMark.repeat(2) + '([^' + mark + '\\n]+?)' + closeRun));
       if (nested) {
         out += `<em>${inline(nested[1], linkDefinitions)}<strong>${inline(nested[2], linkDefinitions)}</strong></em>`;
@@ -187,6 +194,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
     }
     if (c === '~') {
       let n = 1; while (source[i + n] === '~') n++;
+      if (n > 2) { out += '~'.repeat(n); i += n; continue; }
       const mark = '~'.repeat(n), end = source.indexOf(mark, i + n);
       if (end > i + n && !/\s/.test(source[i + n]) && !/\s/.test(source[end - 1])) {
         out += `<del>${inline(source.slice(i + n, end), linkDefinitions)}</del>`;
@@ -316,7 +324,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
           if (blank(blockLines[i])) {
             let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
             if (k >= blockLines.length) { i = k; break; }
-            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent || blockLines[k].match(/^ {0,3}>/)) { body.push(''); i++; hasLooseItems = true; continue; }
+            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent) { body.push(''); i++; hasLooseItems = true; continue; }
+            if (blockLines[k].match(/^ {0,3}>/)) { body.push(''); i++; continue; }
             if (blockLines[k].match(/^ */)[0].length >= indent) { body.push(''); i++; hasLooseItems = true; continue; }
             break;
           }
