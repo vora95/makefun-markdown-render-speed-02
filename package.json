@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "markdown-render-speed-02-entry",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "Modified independent Markdown renderer with list block boundaries, fenced code, tables, reference links, and inline tokens",
   "license": "MIT",

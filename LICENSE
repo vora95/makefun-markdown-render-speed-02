@@ -56,3 +56,6 @@ between list items and following block constructs.
 
 
 The parser includes original compatibility changes for reference-definition destination and title separation.
+
+The 2026 independent list-container refinement in this fork is covered by the
+copyright and license terms above.

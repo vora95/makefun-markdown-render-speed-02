@@ -43,3 +43,6 @@ This revision also includes independently authored reference-definition validati
 This revision further refines list continuation so block starts are checked
 against the item's content indentation while plain paragraph text may continue
 lazily.
+
+The 2026 revision also includes an independently authored nested-container
+continuation refinement for list and blockquote boundaries.

@@ -453,7 +453,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             if (followingFence && blockLines[k].match(/^ */)[0].length < indent) break;
             if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); i++; hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ {0,3}>/) && blockLines[k].match(/^ */)[0].length >= indent) { body.push(''); i++; hasLooseItems = true; continue; }
-            if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead > indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); i++; if (!nestedMarker && (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
+            if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead > indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
             break;
           }
           const lead = blockLines[i].match(/^ */)[0].length;

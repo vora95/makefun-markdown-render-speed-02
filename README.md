@@ -23,7 +23,10 @@ compatibility by CommonMark/GFM section and generated document. The
 implementation is informed by marked 18.1.3; upstream credit is in
 [NOTICE](NOTICE), and the MIT terms are in [LICENSE](LICENSE).
 
-The block renderer retains the source indentation of each fence opener while
+The block renderer matches nested list and quote continuations by container
+indentation, allowing a shallower line to close an inner list while remaining
+inside an outer item. A blank separator before a nested list keeps the outer
+item loose without making the nested list loose. The renderer retains the source indentation of each fence opener while
 collecting its body, so code content is emitted without inline interpretation.
 List looseness follows blank separators tracked while gathering item content.
 Block starts below an item's content indentation end that item; ordinary text
