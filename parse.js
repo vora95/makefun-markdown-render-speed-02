@@ -625,6 +625,41 @@ const padWidth = (line, from, col) => {
   return w;
 };
 
+// Any number of leading spaces, then a run of 3+ backticks or tildes
+// (no info-string check, no end anchor) — the exact manual form of
+// /^ *(?:`{3,}|~{3,})/ used for the blank-branch fence test. Returns the
+// fence character or null.
+const fenceRunAt = line => {
+  let i = 0;
+  while (line[i] === ' ') i++;
+  const c = line[i];
+  if (c !== '`' && c !== '~') return null;
+  let j = i;
+  while (line[j] === c) j++;
+  return j - i >= 3 ? c : null;
+};
+
+// One or more leading spaces, then a list marker followed by a space or
+// tab — the exact manual form of /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/ used
+// for the blank-branch nested-marker test.
+const nestedMarkerAt = line => {
+  let i = 0;
+  while (line[i] === ' ') i++;
+  if (i === 0) return false;
+  const c = line[i];
+  let m = 0;
+  if (c === '-' || c === '+' || c === '*') m = 1;
+  else if (c >= '0' && c <= '9') {
+    let j = i;
+    while (j < line.length && j - i < 9 && line[j] >= '0' && line[j] <= '9') j++;
+    const d = line[j];
+    if (d !== '.' && d !== ')') return false;
+    m = j - i + 1;
+  } else return false;
+  const after = line[i + m];
+  return after === ' ' || after === '\t';
+};
+
 function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false, defsOnly = false, stripTopPara = false, lastKind = null) {
   // Fast native scans replace a regex pass when the source has no CR or
   // tab at all (the common case): the \r replace and the leading-tab
@@ -849,10 +884,10 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         let afterShieldedSetext = false;
         const trackFence = line => {
           if (itemFence) {
-            if (itemFence.closeRe.test(line)) itemFence = null;
+            if (fenceCloseAt(line, itemFence.char, itemFence.len, 3)) itemFence = null;
           } else {
-            const open = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-            if (open && !(open[1][0] === '`' && open[2].includes('`'))) { const fc = open[1][0] === '`' ? '`' : '~'; itemFence = { char: open[1], indent: leadSpaces(line), info: open[2].trim().split(/[ \\t]/)[0], hasBody: false, closeRe: new RegExp('^ {0,3}' + fc + '{' + open[1].length + ',}[ \\t]*$'), closeReIndent: new RegExp('^ {0,' + (indent + 3) + '}' + fc + '{' + open[1].length + ',}[ \\t]*$') }; }
+            const open = fenceOpenAt(line);
+            if (open) { itemFence = { char: open.char, run: open.char.repeat(open.len), len: open.len, indent: leadSpaces(line), info: open.info.trim().split(/[ \t]/)[0], hasBody: false }; }
           }
         };
         trackFence(body[0]);
@@ -861,16 +896,16 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (next && next.ordered === ordered && (!ordered ? next.marker === marker : next.marker.slice(-1) === marker.slice(-1)) && next.indent <= itemIndent && !isHrLine(blockLines[i])) break;
           if (itemFence) {
             const lead = leadSpaces(blockLines[i]);
-            const validClose = itemFence.closeReIndent.test(blockLines[i]);
+            const validClose = fenceCloseAt(blockLines[i], itemFence.char, itemFence.len, indent + 3);
             if (validClose && lead >= indent) { body.push(itemContent(blockLines[i], indent)); itemFence = null; i++; continue; }
             if (validClose) {
-              body.push(itemFence.char);
+              body.push(itemFence.run);
               itemFence = null;
               break;
             }
             if (blank(blockLines[i])) { body.push(''); i++; continue; }
             if (!itemFence.hasBody && lead < indent) {
-              body.push(itemFence.char);
+              body.push(itemFence.run);
               itemFence = null;
               break;
             }
@@ -881,23 +916,24 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (blank(blockLines[i])) {
             if (emptyMarker && body.length === 1 && !body[0].trim()) {
               let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
-              const following = k < blockLines.length && blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-              if (!following || (ordered ? following[1].slice(-1) !== marker.slice(-1) : following[1] !== marker)) break;
+              const following = k < blockLines.length ? listMarkerAt(blockLines[k], false) : null;
+              if (!following || (ordered ? following.marker.slice(-1) !== marker.slice(-1) : following.marker !== marker)) break;
             }
             let k = i; while (k < blockLines.length && blank(blockLines[k])) k++;
             if (k >= blockLines.length) { i = k; break; }
-            const followingFence = blockLines[k].match(/^ *(?:`{3,}|~{3,})/);
+            const followingFence = fenceRunAt(blockLines[k]);
             // A fence starts a new block in this item only at its content
             // indentation. A shallower fence closes the list before parsing.
             if (followingFence && leadSpaces(blockLines[k]) < indent) break;
             // A blank line followed by a different list type (different
             // bullet or ordered-ness) at this list's level ends the list;
             // it is a new list, not a loose continuation of this one.
-            const km = blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-            if (km && leadSpaces(blockLines[k]) <= itemIndent) { const kOrd = /^\d/.test(km[1]); const sameList = ordered ? (kOrd && km[1].slice(-1) === marker.slice(-1)) : (!kOrd && km[1] === marker); if (!sameList) break; }
-            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && leadSpaces(blockLines[k]) <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; const kLead = leadSpaces(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); const km2 = blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/); const kOrd2 = /^\d/.test(km2[1]); const diffType = ordered ? (!kOrd2 || km2[1].slice(-1) !== marker.slice(-1)) : (kOrd2 || km2[1] !== marker); if (!(kLead >= indent && nestedAlready) && !(diffType && kLead < indent)) hasLooseItems = true; continue; }
+            const km = listMarkerAt(blockLines[k], false);
+            if (km && km.indent <= itemIndent) { const sameList = ordered ? (km.ordered && km.marker.slice(-1) === marker.slice(-1)) : (!km.ordered && km.marker === marker); if (!sameList) break; }
+            const km2 = listMarkerAt(blockLines[k], false);
+            if (km2 && km2.indent <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; const kLead = leadSpaces(blockLines[k]); const nestedAlready = body.slice(1).some(line => { const lm = listMarkerAt(line, false); return !!lm && lm.pad > 0; }); const diffType = ordered ? (!km2.ordered || km2.marker.slice(-1) !== marker.slice(-1)) : (km2.ordered || km2.marker !== marker); if (!(kLead >= indent && nestedAlready) && !(diffType && kLead < indent)) hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ {0,3}>/) && leadSpaces(blockLines[k]) >= indent) { body.push(''); allLazyLead0 = true; i++; hasLooseItems = true; continue; }
-            if (leadSpaces(blockLines[k]) >= indent) { const nextLead = leadSpaces(blockLines[k]); const nestedMarker = nextLead >= indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); allLazyLead0 = true; i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
+            if (leadSpaces(blockLines[k]) >= indent) { const nextLead = leadSpaces(blockLines[k]); const nestedMarker = nextLead >= indent && nestedMarkerAt(blockLines[k]); const nestedAlready = body.slice(1).some(line => { const lm = listMarkerAt(line, false); return !!lm && lm.pad > 0; }); body.push(''); allLazyLead0 = true; i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
             break;
           }
           const lead = leadSpaces(blockLines[i]);
