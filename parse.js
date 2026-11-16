@@ -76,6 +76,18 @@ function renderBlocks(markdown, refs = Object.create(null)) {
   const out = [];
   let i = 0;
   const blank = s => /^[ ]*$/.test(s);
+  const htmlBlock = line => {
+    const s = line.replace(/^ {0,3}/, '');
+    let m;
+    if ((m = s.match(/^<(pre|script|style|textarea)(?:\s|>|\/)/i))) return { type: 1, tag: m[1] };
+    if (/^<!--/.test(s)) return { type: 2 };
+    if (/^<\?/.test(s)) return { type: 3 };
+    if (/^<!\[CDATA\[/.test(s)) return { type: 5 };
+    if (/^<![A-Za-z]/.test(s)) return { type: 4 };
+    if (/^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>)/i.test(s)) return { type: 6 };
+    if (/^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*?)?\s*\/?>$/.test(s)) return { type: 7 };
+    return null;
+  };
   while (i < lines.length) {
     if (blank(lines[i])) { i++; continue; }
     let m;
@@ -89,10 +101,12 @@ function renderBlocks(markdown, refs = Object.create(null)) {
       out.push(html + '</table>\n'); continue;
     }
     // Block HTML is passed through verbatim by marked; its contents are not parsed.
-    if (/^ {0,3}(?:<(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>)|<!--|<\?|<![A-Z]|<!\[CDATA\[)/i.test(lines[i])) {
-      const start = i; const tag = lines[i].match(/^ {0,3}<\s*(pre|script|style|textarea)\b/i)?.[1];
-      if (tag) { const close = new RegExp(`<\\/${tag}\\s*>`, 'i'); while (i < lines.length && !close.test(lines[i++])) {} }
-      else { while (i < lines.length && !blank(lines[i])) i++; }
+    if (htmlBlock(lines[i]) && htmlBlock(lines[i]).type !== 7) {
+      const start = i; const html = htmlBlock(lines[i]);
+      if (html.type <= 5) {
+        const end = html.type === 1 ? new RegExp(`<\\/${html.tag}\\s*>`, 'i') : html.type === 2 ? /-->/ : html.type === 3 ? /\?>/ : html.type === 4 ? />/ : /\]\]>/;
+        while (i < lines.length && !end.test(lines[i++])) {}
+      } else { while (i < lines.length && !blank(lines[i])) i++; }
       out.push(lines.slice(start, i).join('\n') + (i < lines.length || src.endsWith('\n') ? '\n' : '')); continue;
     }
     // Indented code blocks are recognized before other block constructs.
@@ -167,7 +181,7 @@ function renderBlocks(markdown, refs = Object.create(null)) {
     }
     if (i + 1 < lines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(lines[i + 1])) { const d = lines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(lines[i].trim(), refs)}</h${d}>\n`); i += 2; continue; }
     let j = i + 1;
-    while (j < lines.length && !blank(lines[j]) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(lines[j])) j++;
+    while (j < lines.length && !blank(lines[j]) && !(htmlBlock(lines[j]) && htmlBlock(lines[j]).type <= 6) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(lines[j])) j++;
     out.push(`<p>${inline(lines.slice(i, j).join('\n'), refs)}</p>\n`); i = j;
   }
   return out.join('');
