@@ -479,6 +479,17 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
   // Every HTML block type starts with `<` after at most 3 spaces; a line
   // that does not can never be an HTML block, so skip the regex battery.
   const htmlBlockOf = line => /^ {0,3}</.test(line) ? identifyHtmlBlock(line) : null;
+  // Hoisted out of the per-line loop: these only depend on nestedContext
+  // (fixed per call) and were re-allocated as closures for every line.
+  const quoteLine = line => line.match(nestedContext ? /^ {0,6}>(?: ?)(.*)$/ : /^ {0,3}>(?: ?)(.*)$/);
+  // Expand only leading tabs in quote content, from the content's real
+  // starting column in the original line; tabs after the first
+  // non-whitespace character stay literal. A `>` directly followed by a
+  // tab donates that tab's first expanded space as the separator.
+  const expandQuoteTabs = (line, content) => { if (!content.includes('\t')) return content; const startCol=line.length-content.length; const beforeChar=line[startCol-1]; let col=startCol,expanded='',seenNonWs=false; for(const ch of content){if(ch==='\t'&&!seenNonWs){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{if(ch==='\t')expanded+='\t';else expanded+=ch;col++;if(ch!==' '&&ch!=='\t')seenNonWs=true;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); return expanded; };
+  // An unmarked line continues a paragraph lazily when that paragraph
+  // began inside the quote and the line does not start a new block.
+  const interrupt = line => /^(?: {4,}|\t)|^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])[ \t]|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(line) || isFenceStart(line);
   while (i < blockLines.length) {
     if (blank(blockLines[i])) { i++; continue; }
     let m;
@@ -546,12 +557,6 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const language = lang.replace(/\\([\p{P}\p{S}])/gu, '$1');
       if (!defsOnly) push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`, 'fence'); i = Math.min(j + 1, blockLines.length); continue;
     }
-    const quoteLine = line => line.match(nestedContext ? /^ {0,6}>(?: ?)(.*)$/ : /^ {0,3}>(?: ?)(.*)$/);
-    // Expand only leading tabs in quote content, from the content's real
-    // starting column in the original line; tabs after the first
-    // non-whitespace character stay literal. A `>` directly followed by a
-    // tab donates that tab's first expanded space as the separator.
-    const expandQuoteTabs = (line, content) => { if (!content.includes('\t')) return content; const startCol=line.length-content.length; const beforeChar=line[startCol-1]; let col=startCol,expanded='',seenNonWs=false; for(const ch of content){if(ch==='\t'&&!seenNonWs){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{if(ch==='\t')expanded+='\t';else expanded+=ch;col++;if(ch!==' '&&ch!=='\t')seenNonWs=true;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); return expanded; };
     if ((m = quoteLine(blockLines[i]))) {
       const q = []; let quoteFenceChar = '', quoteFenceLen = 0; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
@@ -570,9 +575,6 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         }
         q.push(content); i++;
       }
-      // An unmarked line continues a paragraph lazily when that paragraph
-      // began inside the quote and the line does not start a new block.
-      const interrupt = line => /^(?: {4,}|\t)|^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])[ \t]|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(line) || isFenceStart(line);
       // A lazy setext = line gets four spaces when the line before it was
       // itself lazy (marked disarms it that way); after a > line it is
       // plain paragraph text as-is. A line already carrying a backslash
@@ -808,7 +810,10 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     i = j;
   }
   if (defsOnly) return '';
-  return out.join('').replace(/<li>\n(?=<(?:ol|ul)(?:\s|>)|<blockquote>)/g, '<li>');
+  const joined = out.join('');
+  // The <li> newline fix only applies when a nested list/blockquote
+  // directly follows a <li> newline; skip the regex scan otherwise.
+  return joined.includes('<li>\n<') ? joined.replace(/<li>\n(?=<(?:ol|ul)(?:\s|>)|<blockquote>)/g, '<li>') : joined;
 }
 
 /** Render a Markdown string into HTML. */
