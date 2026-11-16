@@ -91,7 +91,17 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   // Plain prose can be escaped in one pass without building delimiter and
   // link state. Keep URL and email starters in the guard because GFM scans
   // those even when the punctuation trigger set is absent.
-  if (!/[*_`\[\]\\!~<&]| {2,}\n|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
+  // Plain-prose gate, split from the single combined regex: the old regex
+  // re-tried its email alternative at every word start, so a long plain
+  // paragraph paid a full scan with per-word backtracking. The split keeps
+  // the exact same fast-path condition, only cheaper: a markup char class
+  // (one C++ scan), a hard break (`  \n` is exactly ` {2,}\n`), a URL
+  // (`://` covers every scheme case-insensitively; `www.` via one regex),
+  // and an email SUPERSET (`@` with a `.` after it — a necessary condition
+  // for the email alternative, so a false positive only costs a full-path
+  // run, never a wrong fast path).
+  const atPos = source.indexOf('@');
+  if (!/[*_`\[\]\\!~<&]/.test(source) && !source.includes('  \n') && !source.includes('://') && !/www\./i.test(source) && !(atPos > 0 && source.indexOf('.', atPos) > atPos)) return escapeHtml(source);
   // The pre-pass only produces emphasis marks and <...> tag spans (the
   // spans matter only to the `~` branch). With no *, _ or ~ in the source
   // it can produce nothing the render loop needs, so skip its full scan.
