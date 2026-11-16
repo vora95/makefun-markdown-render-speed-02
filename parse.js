@@ -12,18 +12,39 @@ function inline(source, refs = Object.create(null)) {
   source = source.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
   source = source.replace(/\\\n/g, '<br>');
   const isPunct = c => !!c && /[!-/:-@[-`{-~]/.test(c);
+  const isSpace = c => !!c && /[ \t\n]/.test(c);
   const starMatch = (s, i) => {
     let n = 1; while (s[i + n] === '*') n++;
     const b = s[i - 1] || '', a = s[i + n] || '';
-    const canOpen = !!a && !/\s/.test(a) && (!isPunct(a) || !b || /\s/.test(b) || isPunct(b));
+    const canOpen = !!a && !isSpace(a) && (!isPunct(a) || !b || isSpace(b) || isPunct(b));
     if (!canOpen) return null;
     for (let j = i + n; j < s.length;) {
+      // A code span shields its contents from delimiter processing.
+      if (s[j] === '`') {
+        let ticks = 1; while (s[j + ticks] === '`') ticks++;
+        const e = s.indexOf('`'.repeat(ticks), j + ticks);
+        if (e >= 0) { j = e + ticks; continue; }
+        j += ticks; continue;
+      }
+      // Skip link destinations and their labels as a unit during pairing.
+      if (s[j] === '[' || s[j] === '!' && s[j + 1] === '[') {
+        const start = j + (s[j] === '!' ? 2 : 1); let e = start, depth = 0;
+        for (; e < s.length; e++) { if (s[e] === '[') depth++; else if (s[e] === ']') { if (!depth) break; depth--; } }
+        if (e < s.length && s[e + 1] === '(') {
+          let z = e + 2, par = 0;
+          for (; z < s.length; z++) { if (s[z] === '(') par++; else if (s[z] === ')') { if (!par) break; par--; } }
+          if (z < s.length) { j = z + 1; continue; }
+        }
+      }
       if (s[j] !== '*') { j++; continue; }
       let m = 1; while (s[j + m] === '*') m++;
       const x = s[j - 1] || '', y = s[j + m] || '';
-      const canClose = !!x && !/\s/.test(x) && (!isPunct(x) || !y || /\s/.test(y) || isPunct(y));
-      const canCloseSide = !!y && !/\s/.test(y) && (!isPunct(y) || !x || /\s/.test(x) || isPunct(x));
-      if (canClose && (n + m) % 3 !== 0 || canClose && !(canOpen && canCloseSide)) return { end: j, opener: n, closer: m };
+      const canClose = !!x && !isSpace(x) && (!isPunct(x) || !y || isSpace(y) || isPunct(y));
+      const canCloseSide = !!y && !isSpace(y) && (!isPunct(y) || !x || isSpace(x) || isPunct(x));
+      const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && canCloseSide;
+      // A longer run that can also open belongs to a nested delimiter pair.
+      if (canClose && canCloseSide && m > n) { j += m; continue; }
+      if (canClose && !ruleOf3Blocks) return { end: j, opener: n, closer: m };
       j += m;
     }
     return null;
@@ -73,9 +94,10 @@ function inline(source, refs = Object.create(null)) {
     if (c === '*') {
       const pair = starMatch(source, i);
       if (pair) {
-        const n = Math.min(2, pair.opener, pair.closer), tag = n === 2 ? 'strong' : 'em';
-        out += `<${tag}>${inline(source.slice(i + n, pair.end + pair.closer - n), refs)}</${tag}>`;
-        i = pair.end + n; continue;
+        const common = Math.min(pair.opener, pair.closer);
+        const n = common % 2 ? 1 : 2, tag = n === 2 ? 'strong' : 'em';
+        out += `<${tag}>${inline('*'.repeat(pair.opener - n) + source.slice(i + pair.opener, pair.end) + '*'.repeat(pair.closer - n), refs)}</${tag}>`;
+        i = pair.end + pair.closer; continue;
       }
     }
     if (source.startsWith('__', i) || source.startsWith('~~', i) || c === '_') {
