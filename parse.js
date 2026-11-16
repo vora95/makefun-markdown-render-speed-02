@@ -21,9 +21,10 @@ const autolinkRe = /(?:(?:https?|ftp):\/\/[^\s<>]+|www\.[^\s<>]+|[A-Za-z][A-Za-z
 // First character of any autolink alternative (scheme letter, www, or an
 // email local-part character). Positions starting with anything else can
 // never match, so the regex is not even attempted there.
-// Single-char autolink dispatch without a regex call per character: the
-// class is ASCII alphanumerics plus .!#$%&'*+/=?^_`{|}~- .
 const autolinkStartChar = c => { const k = c.charCodeAt(0); return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122) || '.!#$%&\'*+/=?^_`{|}~-'.includes(c); };
+// Next markup character in the inline render loop: *, _, `, [, \, !, ~,
+// <, &, or a newline. A literal run ends at the first of these.
+const plainRunRe = /[*_`\[\\!~<&`\n]/g;
 // marked's GFM autolink backpedal: repeatedly keep only the prefix this
 // matches. It drops trailing punctuation, trims an unmatched '(' (and
 // everything after it), keeps a balanced (group), and keeps a ']' or '}'
@@ -451,6 +452,29 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       if (spaces >= 2 && i + 1 < source.length) { out = out.slice(0, -spaces); out += '<br>'; while (source[i + 1] === ' ') i++; }
       else out += '\n';
       i++; continue;
+    }
+    // Bulk literal run: the text up to the next markup character is plain
+    // as long as no autolink can start inside it (no @, no www., and no
+    // scheme word followed by ':'). Appending the run as one slice beats
+    // one escapeHtml-batched append per character. A run that could hold
+    // an autolink falls back to the per-character loop, which attempts
+    // the regex at each position exactly as before.
+    plainRunRe.lastIndex = i;
+    const pm = plainRunRe.exec(source);
+    const runEnd = pm ? pm.index : source.length;
+    if (runEnd > i + 1) {
+      const run = source.slice(i, runEnd);
+      // No autolink can start in the run: no @, no www., and no scheme
+      // word followed by ':'. indexOf gates the two regexes so they only
+      // run when their trigger character is present (the combined regex
+      // was a hotspot: its {1,31} scheme scan ran at every position).
+      let marker = run.indexOf('@') >= 0;
+      if (!marker && (run.indexOf('w') >= 0 || run.indexOf('W') >= 0)) marker = /www\./i.test(run);
+      if (!marker) {
+        const ci = run.indexOf(':');
+        if (ci >= 0) marker = /[A-Za-z][A-Za-z0-9+.-]{1,31}:/.test(run);
+      }
+      if (!marker) { lit += run; i = runEnd; continue; }
     }
     lit += c; i++;
   }
