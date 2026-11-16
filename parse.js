@@ -11,6 +11,23 @@ function inline(source, refs = Object.create(null)) {
   });
   source = source.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
   source = source.replace(/\\\n/g, '<br>');
+  const isPunct = c => !!c && /[!-/:-@[-`{-~]/.test(c);
+  const starMatch = (s, i) => {
+    let n = 1; while (s[i + n] === '*') n++;
+    const b = s[i - 1] || '', a = s[i + n] || '';
+    const canOpen = !!a && !/\s/.test(a) && (!isPunct(a) || !b || /\s/.test(b) || isPunct(b));
+    if (!canOpen) return null;
+    for (let j = i + n; j < s.length;) {
+      if (s[j] !== '*') { j++; continue; }
+      let m = 1; while (s[j + m] === '*') m++;
+      const x = s[j - 1] || '', y = s[j + m] || '';
+      const canClose = !!x && !/\s/.test(x) && (!isPunct(x) || !y || /\s/.test(y) || isPunct(y));
+      const canCloseSide = !!y && !/\s/.test(y) && (!isPunct(y) || !x || /\s/.test(x) || isPunct(x));
+      if (canClose && (n + m) % 3 !== 0 || canClose && !(canOpen && canCloseSide)) return { end: j, opener: n, closer: m };
+      j += m;
+    }
+    return null;
+  };
   source = source.replace(/<(https?:\/\/[^ <>]+|ftp:\/\/[^ <>]+|www\.[^ <>]+)>/gi, (_m, u) => `<a href="${escapeHtml(/^www\./i.test(u) ? 'http://' + u : u)}">${escapeHtml(u)}</a>`);
   source = source.replace(/<([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})>/g, (_m, u) => `<a href="mailto:${escapeHtml(u)}">${escapeHtml(u)}</a>`);
   source = source.replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/g, (m, lead, url) => {
@@ -53,7 +70,15 @@ function inline(source, refs = Object.create(null)) {
       const mark = '`'.repeat(n), end = source.indexOf(mark, i + n);
       if (end >= 0) { let text = source.slice(i + n, end).replace(/\n/g, ' '); if (/^ .* $/.test(text) && /[^ ]/.test(text)) text = text.slice(1, -1); out += '<code>' + escapeHtml(text) + '</code>'; i = end + n; continue; }
     }
-    if (source.startsWith('**', i) || source.startsWith('__', i) || source.startsWith('~~', i) || c === '*' || c === '_') {
+    if (c === '*') {
+      const pair = starMatch(source, i);
+      if (pair) {
+        const n = Math.min(2, pair.opener, pair.closer), tag = n === 2 ? 'strong' : 'em';
+        out += `<${tag}>${inline(source.slice(i + n, pair.end + pair.closer - n), refs)}</${tag}>`;
+        i = pair.end + n; continue;
+      }
+    }
+    if (source.startsWith('__', i) || source.startsWith('~~', i) || c === '_') {
       const mark = source.startsWith('**', i) || source.startsWith('__', i) || source.startsWith('~~', i) ? source.slice(i, i + 2) : c;
       const end = source.indexOf(mark, i + mark.length);
       if (end > i + mark.length) { const tag = mark.length === 2 ? (mark === '~~' ? 'del' : 'strong') : 'em'; out += `<${tag}>${inline(source.slice(i + mark.length, end), refs)}</${tag}>`; i = end + mark.length; continue; }
