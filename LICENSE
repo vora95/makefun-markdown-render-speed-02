@@ -44,5 +44,5 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 This fork includes independently authored compatibility updates for generated
-Markdown documents, including list-item fence boundary handling, and retains
-the license terms above.
+Markdown documents, including list-item fence boundary handling and run-aware
+emphasis delimiter pairing, and retains the license terms above.

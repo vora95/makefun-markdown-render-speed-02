@@ -51,6 +51,22 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
     const right = !!before && !/\s/.test(before) && (!punct(before) || !after || /\s/.test(after) || punct(after));
     marks.push({ ch, start:p, len:end-p, open:left && (ch !== '_' || !word(before) || !word(after)), close:right && (ch !== '_' || !word(before) || !word(after)), usedOpen:0, usedClose:0 }); p=end;
   }
+  // When a doubled opener sits directly against a word inside a single-star
+  // span and its doubled closer is followed by whitespace, marked leaves the
+  // inner runs literal and lets the outer span consume the closer's last star.
+  const shiftedClosers = new Set();
+  for (let n = 0; n + 3 < marks.length; n++) {
+    const [outer, innerOpen, innerClose, outerClose] = marks.slice(n, n + 4);
+    if (outer.ch === '*' && outer.len === 1 && outer.open && !outer.close &&
+        innerOpen.ch === '*' && innerOpen.len === 2 && innerOpen.open && innerOpen.close &&
+        innerClose.ch === '*' && innerClose.len === 2 && innerClose.close && !innerClose.open &&
+        outerClose.ch === '*' && outerClose.len === 1 && outerClose.close && !outerClose.open &&
+        word(source[innerOpen.start - 1] || '') && /\s/.test(source[innerClose.start + innerClose.len] || '')) {
+      innerOpen.open = false;
+      innerOpen.close = false;
+      shiftedClosers.add(n + 2);
+    }
+  }
   const events = new Map();
   const consumed = new Set();
   const addEvent = (at, value) => { let a=events.get(at); if (!a) events.set(at,a=[]); a.push(value); };
@@ -93,11 +109,13 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         const remaining=closer.len-closer.usedClose-closer.usedOpen;
         if (opener.close && available===2 && remaining===1 && !closer.open) continue;
         const both=closer.open;
-        if (both && (available+remaining)%3===0 && !(available%3===0 && remaining%3===0)) continue;
+        const blockedByRuleOfThree = both && (available+remaining)%3===0 && !(available%3===0 && remaining%3===0);
+        if (blockedByRuleOfThree) continue;
         amount=available>=2 && remaining>=2 ? 2 : 1; found=oi; break;
       }
       if (found<0) break;
-      const opener=marks[found], openAt=opener.start+opener.len-opener.usedClose-opener.usedOpen-amount, closeAt=closer.start+closer.usedClose;
+      const opener=marks[found], openAt=opener.start+opener.len-opener.usedClose-opener.usedOpen-amount;
+      const closeAt=closer.start+closer.usedClose+(shiftedClosers.has(ci) && amount === 1 ? closer.len - 1 : 0);
       if (anchors.some(([a,b]) => (a <= opener.start && opener.start < b) !== (a <= closer.start && closer.start < b))) break;
       const tag=amount===2?'strong':'em'; addEvent(openAt,`<${tag}>`); addEvent(closeAt+amount,`</${tag}>`);
       for(let q=openAt;q<openAt+amount;q++) consumed.add(q);
@@ -389,11 +407,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         let itemFence = null;
         const trackFence = line => {
           if (itemFence) {
-            const close = new RegExp('^ {0,3}' + (itemFence[0] === '`' ? '`' : '~') + '{' + itemFence.length + ',}[ \\t]*$');
+            const close = new RegExp('^ {0,3}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
             if (close.test(line)) itemFence = null;
           } else {
             const open = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-            if (open && !(open[1][0] === '`' && open[2].includes('`'))) itemFence = open[1];
+            if (open && !(open[1][0] === '`' && open[2].includes('`'))) itemFence = { char: open[1], indent: line.match(/^ */)[0].length, info: open[2].trim().split(/[ \\t]/)[0], hasBody: false };
           }
         };
         trackFence(body[0]);
@@ -402,23 +420,23 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
           if (itemFence) {
             const lead = blockLines[i].match(/^ */)[0].length;
-            const close = new RegExp('^ {0,3}' + (itemFence[0] === '`' ? '`' : '~') + '{' + itemFence.length + ',}[ \\t]*$');
-            if (close.test(blockLines[i])) { body.push(blockLines[i]); trackFence(blockLines[i]); i++; continue; }
-            // A fenced block belongs to its list item. An unindented
-            // nonblank line ends that item, even while the fence is open;
-            // leave the line for the enclosing block parser.
-            if (!blank(blockLines[i]) && lead < indent) {
-              // A fence closed at the item's marker column still owns its
-              // intervening source lines, including unindented code.
-              let closesAtItemLevel = false;
-              for (let k = i + 1; k < blockLines.length; k++) {
-                const closeLead = blockLines[k].match(/^ */)[0].length;
-                if (close.test(blockLines[k])) { closesAtItemLevel = closeLead <= itemIndent; break; }
-              }
-              if (!closesAtItemLevel) break;
+            const close = new RegExp('^ {0,3}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
+            const validClose = close.test(blockLines[i]);
+            if (validClose && lead >= indent) { body.push(blockLines[i].slice(indent)); itemFence = null; i++; continue; }
+            if (validClose) {
+              body.push(itemFence.char);
+              itemFence = null;
+              break;
             }
-            body.push(blockLines[i].slice(lead >= indent ? indent : 0));
-            trackFence(blockLines[i]); i++; continue;
+            if (blank(blockLines[i])) { body.push(''); i++; continue; }
+            if (!itemFence.hasBody && lead < indent) {
+              body.push(itemFence.char);
+              itemFence = null;
+              break;
+            }
+            if (!validClose && !itemFence.hasBody && lead >= indent) itemFence.hasBody = true;
+            body.push(blockLines[i].slice(Math.min(indent, lead)));
+            i++; continue;
           }
           if (blank(blockLines[i])) {
             if (emptyMarker && body.length === 1 && !body[0].trim()) {
