@@ -83,6 +83,45 @@ function matchingTickEnd(s, from, count) {
 const word = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122); return /[\p{L}\p{N}]/u.test(c); };
 const punct = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
 const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };
+// Index of the ']' closing the bracket opened at `from` (depth-aware;
+// a backslash-escaped bracket does not count), or -1 when the bracket
+// never closes. Shared by the emphasis pre-pass and the anchor scan,
+// which used two copies of this loop.
+const bracketClose = (s, from) => {
+  let depth = 0;
+  for (let q = from; q < s.length; q++) {
+    if (s[q] === '\\') { q++; continue; }
+    if (s[q] === '[') depth++;
+    else if (s[q] === ']') { if (!depth) return q; depth--; }
+  }
+  return -1;
+};
+
+// Find the closer for a tilde run of length `n`, searching from `from`
+// (just past the opener). A closer is a run of exactly `n` tildes that
+// can close (non-space before it); a run that can also open deepens the
+// nesting instead. Tildes escaped by an odd run of backslashes, and
+// tildes inside <...> spans, are skipped. Returns the closer index, or
+// -1 when no closer exists.
+const findTildeClose = (source, from, n, tagSpans) => {
+  let depth = 1, cursor = from;
+  while (cursor < source.length) {
+    cursor = source.indexOf('~', cursor); if (cursor < 0) return -1;
+    // Skip a tilde escaped by an odd run of backslashes (literal, not a delimiter).
+    let bs = 0; for (let b = cursor - 1; b >= 0 && source[b] === '\\'; b--) bs++;
+    if (bs % 2 === 1) { cursor += 1; continue; }
+    let run = 1; while (source[cursor + run] === '~') run++;
+    if (tagSpans.some(([s, e]) => cursor >= s && cursor < e)) { cursor += run; continue; }
+    if (run === n) {
+      const before = source[cursor - 1] || '', after = source[cursor + n] || '';
+      const canClose = !!before && !/\s/.test(before), canOpen = !!after && !/\s/.test(after);
+      if (canClose && depth > 0) { depth--; if (!depth) return cursor; }
+      if (canOpen) depth++;
+    }
+    cursor += run;
+  }
+  return -1;
+};
 // Rule-of-three test on the amounts actually consumed in a pair, shared
 // by the emphasis pairing loop (it was re-allocated as a closure per
 // scanned event entry).
@@ -134,7 +173,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
     if (ch === '\\' && p+1<source.length && /[\p{P}\p{S}]/u.test(source[p+1])) { p+=2; continue; }
     if (ch === '`') { let n = 1; while (source[p + n] === '`') n++; let e = matchingTickEnd(source, p + n, n); if (e >= 0) { p = e + n; continue; } p += n; continue; }
     if (ch === '<' && /[A-Za-z!/?]/.test(source[p + 1] || '')) { let q=p+1, quote=''; for(;q<source.length;q++){const x=source[q];if(quote){if(x===quote)quote='';}else if(x==='"'||x==="'")quote=x;else if(x==='>')break;} if(q<source.length){tagSpans.push([p, q+1]); p=q+1;continue;} }
-    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!labelUnclosedInSource(label, p+(ch==='!'?2:1), source) && !/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label) && !labelHasDefinedRef(label, linkDefinitions)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
+    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=bracketClose(source, p+(ch==='!'?2:1)); if(q>=0 && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!labelUnclosedInSource(label, p+(ch==='!'?2:1), source) && !/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label) && !labelHasDefinedRef(label, linkDefinitions)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
     if (ch !== '*' && ch !== '_') { p++; continue; }
     if (suppressMarksUntil >= 0) { if (p < suppressMarksUntil) { let end = p + 1; while (source[end] === ch) end++; p = end; continue; } suppressMarksUntil = -1; }
     let end = p + 1; while (source[end] === ch) end++;
@@ -176,9 +215,8 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   };
   const anchors = [];
   for (let a = 0; marks.length && a < source.length; a++) if (source[a] === '[' && !(a && source[a - 1] === '!')) {
-    let b = a + 1, depth = 0;
-    for (; b < source.length; b++) { if (source[b] === '\\') { b++; continue; } if (source[b] === '[') depth++; else if (source[b] === ']') { if (!depth) break; depth--; } }
-    if (b >= source.length) continue;
+    const b = bracketClose(source, a + 1);
+    if (b < 0) continue;
     const label = source.slice(a + 1, b), suffix = source[b + 1]; let end = b + 1;
     if (suffix === '(') { let d = 0, p = b + 2; for (; p < source.length; p++) { if (source[p] === '\\') { p++; continue; } if (source[p] === '(') d++; else if (source[p] === ')') { if (!d) break; d--; } } if (p < source.length) end = p + 1; else continue; }
     else if (suffix === '[') { const z = source.indexOf(']', b + 2); if (z >= 0) { const key = (source.slice(b + 2, z) || label).trim().toLowerCase().replace(/ß/g, 'ss'); if (linkDefinitions[key]) end = z + 1; else continue; } else continue; }
@@ -451,22 +489,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       // A tilde inside a <...> span is literal text, matching the
       // emphasis pre-pass which skips those spans for * and _.
       if (tagSpans.some(([s, e]) => i >= s && i < e)) { lit += '~'.repeat(n); i += n; continue; }
-      const mark = '~'.repeat(n); let end = -1, depth = 1, cursor = i + n;
-      while (cursor < source.length) {
-        cursor = source.indexOf('~', cursor); if (cursor < 0) break;
-        // Skip a tilde escaped by an odd run of backslashes (literal, not a delimiter).
-        let bs = 0; for (let b = cursor - 1; b >= 0 && source[b] === '\\'; b--) bs++;
-        if (bs % 2 === 1) { cursor += 1; continue; }
-        let run = 1; while (source[cursor + run] === '~') run++;
-        if (tagSpans.some(([s, e]) => cursor >= s && cursor < e)) { cursor += run; continue; }
-        if (run === n) {
-          const before = source[cursor - 1] || '', after = source[cursor + n] || '';
-          const canClose = !!before && !/\s/.test(before), canOpen = !!after && !/\s/.test(after);
-          if (canClose && depth > 0) { depth--; if (!depth) { end = cursor; break; } }
-          if (canOpen) depth++;
-        }
-        cursor += run;
-      }
+      const end = findTildeClose(source, i + n, n, tagSpans);
       if (end >= 0) {
         flush(); out += `<del>${inline(source.slice(i + n, end), linkDefinitions, disableAutolinks)}</del>`;
         i = end + n; continue;
