@@ -19,3 +19,6 @@ entities, raw tags, and GFM autolinks. The practice comparison reports
 compatibility by CommonMark/GFM section and generated document. The
 implementation is informed by marked 18.1.3; upstream credit is in
 [NOTICE](NOTICE), and the MIT terms are in [LICENSE](LICENSE).
+
+The block renderer retains the source indentation of each fence opener while
+collecting its body, so code content is emitted without inline interpretation.
