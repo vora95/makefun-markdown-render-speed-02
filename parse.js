@@ -524,6 +524,107 @@ const isFenceStart = line => {
   return !(m[1][0] === '`' && m[2].includes('`'));
 };
 
+// --- Cursor-based line classifiers (Builder #4, M3) ---------------------
+// The list tokenizer and the block loop tested every line with several
+// regexes; these manual scans answer the same questions without regex
+// setup cost. Each one is an exact transliteration of the regex it
+// replaces — verified against the regex on a fuzz battery of generated
+// lines (see the Builder #4 notes in README) plus the 720-case comparator.
+
+// List marker at the start of a line: up to 3 leading spaces, then a
+// bullet (-, +, *) or an ordered marker (1-9 digits + '.' or ')').
+// `withContent` selects the two regex shapes the old code used: true is
+// the item-start form `(?:[ \t]+(.*)|[ \t]*)$` (content is the text after
+// the separator, undefined when the line ends at the marker); false is
+// the continuation-check form `(?:[ \t]+|$)`. Returns null when the line
+// holds no marker, else { marker, ordered, indent, content, pad } where
+// pad is the separator's tab-aware column width (0 when the line ends at
+// the marker — callers keep the old `if (!pad) pad = 1` rule).
+const listMarkerAt = (line, withContent) => {
+  let i = 0;
+  while (i < 3 && line[i] === ' ') i++;
+  const c = line[i];
+  let markerLen = 0, ordered = false;
+  if (c === '-' || c === '+' || c === '*') { markerLen = 1; }
+  else if (c >= '0' && c <= '9') {
+    let j = i;
+    while (j < line.length && j - i < 9 && line[j] >= '0' && line[j] <= '9') j++;
+    const d = line[j];
+    if (d !== '.' && d !== ')') return null;
+    markerLen = j - i + 1; ordered = true;
+  } else return null;
+  const marker = line.slice(i, i + markerLen);
+  const sepStart = i + markerLen;
+  let k = sepStart, pad = 0, col = sepStart;
+  while (line[k] === ' ' || line[k] === '\t') {
+    const n = line[k] === '\t' ? 4 - col % 4 : 1;
+    pad += n; col += n; k++;
+  }
+  if (withContent) {
+    if (k === sepStart && k < line.length) return null;
+    return { marker, ordered, indent: i, content: k > sepStart ? line.slice(k) : undefined, pad };
+  }
+  if (k === sepStart && k < line.length) return null;
+  return { marker, ordered, indent: i, content: undefined, pad };
+};
+
+// Exact manual form of
+// /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/
+const isHrLine = line => {
+  let i = 0;
+  while (i < 3 && line[i] === ' ') i++;
+  const c = line[i];
+  if (c !== '*' && c !== '-' && c !== '_') return false;
+  let n = 0;
+  while (i < line.length) {
+    if (line[i] === c) { n++; i++; }
+    else if (line[i] === ' ' || line[i] === '\t') i++;
+    else return false;
+  }
+  return n >= 3;
+};
+
+// Exact manual form of /^ {0,N}(`{3,}|~{3,})(.*)$/ plus the
+// backtick-info rule (a backtick fence whose info string holds a backtick
+// is not a fence). Returns { char, len, info, indent } or null.
+const fenceOpenAt = (line, maxIndent = 3) => {
+  let i = 0;
+  while (i < maxIndent && line[i] === ' ') i++;
+  const c = line[i];
+  if (c !== '`' && c !== '~') return null;
+  let j = i;
+  while (line[j] === c) j++;
+  if (j - i < 3) return null;
+  const info = line.slice(j);
+  if (c === '`' && info.includes('`')) return null;
+  return { char: c, len: j - i, info, indent: i };
+};
+
+// Exact manual form of a fence-close regex
+// `^ {0,N}<char>{len,}[ \t]*$` (N = 3 for the plain close, indent + 3
+// for the item-fence close that must sit at the item's content column).
+const fenceCloseAt = (line, char, len, maxIndent) => {
+  let i = 0;
+  while (i < maxIndent && line[i] === ' ') i++;
+  let j = i;
+  while (line[j] === char) j++;
+  if (j - i < len) return false;
+  while (j < line.length && (line[j] === ' ' || line[j] === '\t')) j++;
+  return j === line.length;
+};
+
+// Column width of the run of spaces/tabs starting at `from`, expanding
+// tabs to the next multiple of 4 from column `col`. Replaces the two
+// inline pad-measurement loops in the list tokenizer.
+const padWidth = (line, from, col) => {
+  let w = 0, c = col;
+  for (let k = from; k < line.length && (line[k] === ' ' || line[k] === '\t'); k++) {
+    const n = line[k] === '\t' ? 4 - c % 4 : 1;
+    w += n; c += n;
+  }
+  return w;
+};
+
 function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false, defsOnly = false, stripTopPara = false, lastKind = null) {
   // Fast native scans replace a regex pass when the source has no CR or
   // tab at all (the common case): the \r replace and the leading-tab
@@ -708,11 +809,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       }
       continue;
     }
-    if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/)) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) {
-      const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
-      const marker = m[1], markerIndent = leadSpaces(blockLines[i]);
-      const markerPad = blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0] || '';
-      let markerPadding=0, markerCol=markerIndent+marker.length; for(const ch of markerPad){const n=ch==='\t'?4-markerCol%4:1;markerPadding+=n;markerCol+=n;}
+    const listStart = listMarkerAt(blockLines[i], true);
+    if (listStart && !isHrLine(blockLines[i])) {
+      const ordered = listStart.ordered, tag = ordered ? 'ol' : 'ul';
+      const marker = listStart.marker, markerIndent = listStart.indent;
+      let markerPadding = listStart.pad;
       if(!markerPadding) markerPadding=1;
       const markerWidth = marker.length + (markerPadding > 4 ? 1 : markerPadding);
       const contentIndent = markerIndent + markerWidth;
@@ -726,16 +827,16 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         return sourceLine.slice(spaces);
       };
       while (i < blockLines.length) {
-        if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
-        const itemMatch = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/);
-        if (!itemMatch || (ordered ? itemMatch[1].slice(-1) !== marker.slice(-1) : itemMatch[1] !== marker)) break;
-        const itemIndent = leadSpaces(blockLines[i]);
-        const padText=blockLines[i].slice(itemIndent+itemMatch[1].length).match(/^[ \t]+/)?.[0]||'';
-        let padding=0,padCol=itemIndent+itemMatch[1].length;for(const ch of padText){const n=ch==='\t'?4-padCol%4:1;padding+=n;padCol+=n;}if(!padding)padding=1;
-        const width = itemMatch[1].length + (padding > 4 ? 1 : padding);
+        if (isHrLine(blockLines[i])) break;
+        const itemMatch = listMarkerAt(blockLines[i], true);
+        if (!itemMatch || (ordered ? itemMatch.marker.slice(-1) !== marker.slice(-1) : itemMatch.marker !== marker)) break;
+        const itemIndent = itemMatch.indent;
+        let padding = itemMatch.pad;
+        if(!padding)padding=1;
+        const width = itemMatch.marker.length + (padding > 4 ? 1 : padding);
         const indent = itemIndent + width;
-        const emptyMarker = !(itemMatch[2] || '').trim();
-        const body = [padding > 4 ? ' '.repeat(padding - 1) + (itemMatch[2] || '') : (itemMatch[2] || '')]; i++;
+        const emptyMarker = !(itemMatch.content || '').trim();
+        const body = [padding > 4 ? ' '.repeat(padding - 1) + (itemMatch.content || '') : (itemMatch.content || '')]; i++;
         let itemFence = null;
         // A lazy setext underline (= or -) in this item is paragraph text,
         // not a heading, unless the content column is at least 3 wide and
@@ -756,8 +857,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         };
         trackFence(body[0]);
         while (i < blockLines.length) {
-          const next = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-          if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && leadSpaces(blockLines[i]) <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
+          const next = listMarkerAt(blockLines[i], false);
+          if (next && next.ordered === ordered && (!ordered ? next.marker === marker : next.marker.slice(-1) === marker.slice(-1)) && next.indent <= itemIndent && !isHrLine(blockLines[i])) break;
           if (itemFence) {
             const lead = leadSpaces(blockLines[i]);
             const validClose = itemFence.closeReIndent.test(blockLines[i]);
