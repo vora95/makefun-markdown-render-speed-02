@@ -32,7 +32,7 @@ function hasShortTickInsideSpan(s) {
   return false;
 }
 
-function inline(source, linkDefinitions = Object.create(null)) {
+function inline(source, linkDefinitions = Object.create(null), disableAutolinks = false) {
   // Resolve emphasis runs as a delimiter stack before rendering the other
   // inline tokens. Each run keeps its unused marker characters literal.
   const marks = [];
@@ -73,6 +73,23 @@ function inline(source, linkDefinitions = Object.create(null)) {
       for (let oi=ci-1; oi>=0; oi--) {
         const opener=marks[oi]; const available=opener.len-opener.usedOpen-opener.usedClose;
         if (opener.ch!==closer.ch || !opener.open || available<=0) continue;
+        // A delimiter pair already closed inside this candidate may leave
+        // its closing marker immediately attached to a word. In that case
+        // marked treats the surrounding delimiter as literal instead of
+        // letting it span across the adjacent text.
+        const leftEdge = opener.start + opener.len;
+        const rightEdge = closer.start;
+        let attachedInnerClose = false;
+        for (const [at, tags] of events) {
+          if (at <= leftEdge || at >= rightEdge || !word(source[at] || '')) continue;
+          const closing = tags.find(tag => tag.startsWith('</em>') || tag.startsWith('</strong>'));
+          if (closing) {
+            const openingTag = closing === '</em>' ? '<em>' : '<strong>';
+            const openingAt = [...events].find(([pos, values]) => pos > leftEdge && pos < at && values.includes(openingTag))?.[0];
+            if (openingAt !== undefined && /\s/.test(source[openingAt - 1] || '')) { attachedInnerClose = true; break; }
+          }
+        }
+        if (attachedInnerClose) continue;
         const remaining=closer.len-closer.usedClose-closer.usedOpen;
         if (opener.close && available===2 && remaining===1 && !closer.open) continue;
         const both=closer.open;
@@ -123,7 +140,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
     // GFM recognizes URL and email forms in ordinary text. Keep the scan
     // anchored at the current cursor so punctuation and adjacent markup stay
     // available to the normal inline scanner.
-    if (c !== '<') {
+    if (c !== '<' && !disableAutolinks) {
       const tail = source.slice(i);
       const candidate = tail.match(/^(?:(?:https?|ftp):\/\/[^\s<>]+|www\.[^\s<>]+|[A-Za-z][A-Za-z0-9+.-]{1,31}:(?=[A-Za-z0-9])(?=[^\s<>]*(?:@|\.))[^\s<>/]+(?:\/[^\s<>/]*)?|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?![A-Za-z0-9_-]))/i);
       if (candidate) {
@@ -141,7 +158,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
         }
         if (value) {
           const email = value.includes('@') && !/^[A-Za-z][A-Za-z0-9+.-]*:/i.test(value);
-          const href = (email ? 'mailto:' + value : /^www\./i.test(value) ? 'http://' + value : value).replace(/\\/g, '%5C');
+          const href = (email ? 'mailto:' + value : /^www\./i.test(value) ? 'http://' + value : value).replace(/\\/g, '%5C').replace(/\]/g, '%5D');
           out += `<a href="${escapeHtml(href)}">${escapeHtml(value)}</a>`;
           i += value.length; continue;
         }
@@ -195,9 +212,9 @@ function inline(source, linkDefinitions = Object.create(null)) {
           const normalizedRef = ref.replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
           const got = linkDefinitions[normalizedRef]; if (got) { dest = got.href; title = got.title || ''; }
         }
-        if (dest !== null && !nestedLink && !hasShortTickInsideSpan(label)) { const altSource = label.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); const alt = inline(altSource, linkDefinitions).replace(/<[^>]*>/g, ''); const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
+        if (dest !== null && !nestedLink && !hasShortTickInsideSpan(label)) { const altSource = label.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); const alt = inline(altSource, linkDefinitions, true).replace(/<[^>]*>/g, ''); const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); title = title.replace(/\\([\p{P}\p{S}])/gu, '$1'); out += image ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>` : `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions, true)}</a>`; i = end; continue; }
       if (dest === null && source[end] === '(') { const ref = label.replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); const fallback = linkDefinitions[ref]; if (fallback) { dest = fallback.href; title = fallback.title || ''; end = close + 1; } }
-      if (dest !== null && !nestedLink && !hasShortTickInsideSpan(label)) { const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); out += `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions)}</a>`; i = end; continue; }
+      if (dest !== null && !nestedLink && !hasShortTickInsideSpan(label)) { const href = dest.replace(/ /g, '%20').replace(/"/g, '%22'); out += `<a href="${escapeAttribute(href)}"${title ? ` title="${escapeAttribute(title)}"` : ''}>${inline(label, linkDefinitions, true)}</a>`; i = end; continue; }
       }
     }
     if (c === '\\' && i + 1 < source.length) {
@@ -225,7 +242,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
       }
     }
 
-    if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(angleDestination(href))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } const strictAttrs = raw.includes('*') || /["'][A-Za-z_:][A-Za-z0-9_.:-]*=/.test(raw) || /^<\/[A-Za-z][A-Za-z0-9-]*\s+/.test(raw) || /="[^"\n]*\\"/.test(raw) || /\n[^<>]*[!*#]/.test(raw); const badAttrs = strictAttrs && !validInlineTag(raw); if (!badAttrs && /^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+(?:[^<>"']|"[^"]*"|'[^']*')*)?\s*\/?>$/s.test(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { out += raw; i = e + 1; continue; } } }
+    if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (!disableAutolinks && splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (!disableAutolinks && /^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!disableAutolinks && /^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(angleDestination(href))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!disableAutolinks && !inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } const strictAttrs = raw.includes('*') || /["'][A-Za-z_:][A-Za-z0-9_.:-]*=/.test(raw) || /^<\/[A-Za-z][A-Za-z0-9-]*\s+/.test(raw) || /="[^"\n]*\\"/.test(raw) || /\n[^<>]*[!*#]/.test(raw); const badAttrs = strictAttrs && !validInlineTag(raw); if (!badAttrs && /^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+(?:[^<>"']|"[^"]*"|'[^']*')*)?\s*\/?>$/s.test(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]*);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += escapeHtml(!cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp)); } else out += m[0]; i += m[0].length; continue; } }
     if (c === '\n') {
       let spaces = 0; for (let p = out.length - 1; p >= 0 && out[p] === ' '; p--) spaces++;
