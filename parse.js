@@ -439,7 +439,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     if ((m = quoteLine(blockLines[i]))) {
       const q = []; let quoteFence = false; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
-        if (content.includes('\t')) { let col=1,expanded=''; for(const ch of content){if(ch==='\t'){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{expanded+=ch;col++;}} content=expanded.startsWith(' ')?expanded.slice(1):expanded; }
+        if (content.includes('\t')) { const startCol=blockLines[i].length-content.length; const beforeChar=blockLines[i][startCol-1]; let col=startCol,expanded=''; for(const ch of content){if(ch==='\t'){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{expanded+=ch;col++;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); content=expanded; }
         if (content === ' ' && q.some(line=>line.trim())) content='\u0001';
         const fm = content.match(/^ {0,3}(`{3,}|~{3,})/);
         if (fm && !(fm[1][0] === '`' && content.slice(fm[0].length).includes('`'))) quoteFence = !quoteFence;
