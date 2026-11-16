@@ -465,14 +465,23 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
     if (runEnd > i + 1) {
       const run = source.slice(i, runEnd);
       // No autolink can start in the run: no @, no www., and no scheme
-      // word followed by ':'. indexOf gates the two regexes so they only
-      // run when their trigger character is present (the combined regex
-      // was a hotspot: its {1,31} scheme scan ran at every position).
+      // word followed by ':'. indexOf gates the checks so they only run
+      // when their trigger character is present; the www. and scheme
+      // tests are manual scans (the combined regex was a hotspot: its
+      // {1,31} scheme scan ran at every position). A scheme word is a
+      // letter + 1-31 scheme chars immediately before a ':', so walking
+      // back at most 32 chars from each ':' is exactly equivalent.
       let marker = run.indexOf('@') >= 0;
       if (!marker && (run.indexOf('w') >= 0 || run.indexOf('W') >= 0)) marker = /www\./i.test(run);
       if (!marker) {
-        const ci = run.indexOf(':');
-        if (ci >= 0) marker = /[A-Za-z][A-Za-z0-9+.-]{1,31}:/.test(run);
+        let ci = run.indexOf(':');
+        while (ci >= 0 && !marker) {
+          let k = ci - 1, n = 0;
+          while (k >= 0 && n < 32) { const cc = run.charCodeAt(k); if (!((cc >= 48 && cc <= 57) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122) || cc === 43 || cc === 46 || cc === 45)) break; n++; k--; }
+          const lo = Math.max(k + 1, ci - 32);
+          for (let p = lo; p <= ci - 2; p++) { const cc = run.charCodeAt(p); if ((cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122)) { marker = true; break; } }
+          ci = run.indexOf(':', ci + 1);
+        }
       }
       if (!marker) { lit += run; i = runEnd; continue; }
     }
