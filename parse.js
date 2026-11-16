@@ -580,6 +580,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             // A fence starts a new block in this item only at its content
             // indentation. A shallower fence closes the list before parsing.
             if (followingFence && blockLines[k].match(/^ */)[0].length < indent) break;
+            // A blank line followed by a different list type (different
+            // bullet or ordered-ness) at this list's level ends the list;
+            // it is a new list, not a loose continuation of this one.
+            const km = blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
+            if (km && blockLines[k].match(/^ */)[0].length <= itemIndent) { const kOrd = /^\d/.test(km[1]); const sameList = ordered ? (kOrd && km[1].slice(-1) === marker.slice(-1)) : (!kOrd && km[1] === marker); if (!sameList) break; }
             if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; const kLead = blockLines[k].match(/^ */)[0].length; const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); if (!(kLead >= indent && nestedAlready)) hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ {0,3}>/) && blockLines[k].match(/^ */)[0].length >= indent) { body.push(''); allLazyLead0 = true; i++; hasLooseItems = true; continue; }
             if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead > indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); allLazyLead0 = true; i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
