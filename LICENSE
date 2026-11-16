@@ -1,5 +1,8 @@
 SPDX-License-Identifier: MIT
 
+The source includes independently authored parser refinements for multiline
+HTML tags and balanced punctuation in bare URL recognition.
+
 The independently written parser and driver modifications in this repository,
 including block, list, fence, link, and inline handling, are Copyright (c) 2026
 vora95 and contributors and are licensed under these same terms.

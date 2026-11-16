@@ -15,7 +15,8 @@ block scanner for headings, fenced code, lists, block quotes, and HTML, alongsid
 inline handling for formatting, links, images, and supported GFM extensions.
 Task checkboxes are inserted into the first paragraph of loose task items. Fenced
 blocks and list-contained code are collected with explicit delimiter state.
-Exact compatibility is checked against the supplied practice corpus. Upstream
+The implementation includes quote-aware, multiline inline tag recognition and
+balanced-parenthesis handling for bare GFM URLs. Exact compatibility is checked against the supplied practice corpus. Upstream
 credit is in [NOTICE](NOTICE); the MIT terms are in [LICENSE](LICENSE).
 
 Inline delimiter handling, block recognition, link destination parsing, and

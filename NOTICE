@@ -15,3 +15,6 @@ code and delimiter handling, link destination parsing, block and list
 recognition, fenced code collection, and an independent batch driver. These
 files are not a copy of the upstream distribution. The upstream copyright and
 MIT attribution above are retained for the marked-derived work.
+
+Additional independently authored refinements include multiline quoted HTML
+tag scanning and balanced-parenthesis handling for bare GFM URLs.
