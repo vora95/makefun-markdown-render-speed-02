@@ -11,8 +11,8 @@ function inline(source, refs = Object.create(null)) {
   });
   source = source.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
   source = source.replace(/\\\n/g, '<br>');
-  const isPunct = c => !!c && /[!-/:-@[-`{-~]/.test(c);
-  const isSpace = c => !!c && /[ \t\n]/.test(c);
+  const isPunct = c => !!c && /[\p{P}\p{S}]/u.test(c);
+  const isSpace = c => !!c && /\s/u.test(c);
   const starMatch = (s, i) => {
     let n = 1; while (s[i + n] === '*') n++;
     const b = s[i - 1] || '', a = s[i + n] || '';
@@ -44,6 +44,42 @@ function inline(source, refs = Object.create(null)) {
       const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && canCloseSide;
       // A longer run that can also open belongs to a nested delimiter pair.
       if (canClose && canCloseSide && m > n) { j += m; continue; }
+      if (canClose && !ruleOf3Blocks) return { end: j, opener: n, closer: m };
+      j += m;
+    }
+    return null;
+  };
+  const underMatch = (s, i) => {
+    let n = 1; while (s[i + n] === '_') n++;
+    const b = s[i - 1] || '', a = s[i + n] || '';
+    const left = !!a && !isSpace(a) && (!isPunct(a) || !b || isSpace(b) || isPunct(b));
+    const right = !!b && !isSpace(b) && (!isPunct(b) || !a || isSpace(a) || isPunct(a));
+    const canOpen = left && (!right || isPunct(b));
+    if (!canOpen) return null;
+    for (let j = i + n; j < s.length;) {
+      if (s[j] === '`') {
+        let ticks = 1; while (s[j + ticks] === '`') ticks++;
+        const e = s.indexOf('`'.repeat(ticks), j + ticks);
+        if (e >= 0) { j = e + ticks; continue; }
+        j += ticks; continue;
+      }
+      if (s[j] === '[' || s[j] === '!' && s[j + 1] === '[') {
+        const start = j + (s[j] === '!' ? 2 : 1); let e = start, depth = 0;
+        for (; e < s.length; e++) { if (s[e] === '[') depth++; else if (s[e] === ']') { if (!depth) break; depth--; } }
+        if (e < s.length && s[e + 1] === '(') {
+          let z = e + 2, par = 0;
+          for (; z < s.length; z++) { if (s[z] === '(') par++; else if (s[z] === ')') { if (!par) break; par--; } }
+          if (z < s.length) { j = z + 1; continue; }
+        }
+      }
+      if (s[j] !== '_') { j++; continue; }
+      let m = 1; while (s[j + m] === '_') m++;
+      const x = s[j - 1] || '', y = s[j + m] || '';
+      const closeLeft = !!x && !isSpace(x) && (!isPunct(x) || !y || isSpace(y) || isPunct(y));
+      const closeRight = !!y && !isSpace(y) && (!isPunct(y) || !x || isSpace(x) || isPunct(x));
+      const canClose = closeLeft && (!closeRight || isPunct(y));
+      const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && closeRight;
+      if (canClose && closeLeft && m > n) { j += m; continue; }
       if (canClose && !ruleOf3Blocks) return { end: j, opener: n, closer: m };
       j += m;
     }
@@ -100,10 +136,19 @@ function inline(source, refs = Object.create(null)) {
         i = pair.end + pair.closer; continue;
       }
     }
-    if (source.startsWith('__', i) || source.startsWith('~~', i) || c === '_') {
-      const mark = source.startsWith('**', i) || source.startsWith('__', i) || source.startsWith('~~', i) ? source.slice(i, i + 2) : c;
+    if (c === '_') {
+      const pair = underMatch(source, i);
+      if (pair) {
+        const common = Math.min(pair.opener, pair.closer);
+        const n = common % 2 ? 1 : 2, tag = n === 2 ? 'strong' : 'em';
+        out += '_'.repeat(pair.opener - n) + `<${tag}>${inline(source.slice(i + pair.opener, pair.end), refs)}</${tag}>` + '_'.repeat(pair.closer - n);
+        i = pair.end + pair.closer; continue;
+      }
+    }
+    if (source.startsWith('**', i) || source.startsWith('~~', i)) {
+      const mark = source.slice(i, i + 2);
       const end = source.indexOf(mark, i + mark.length);
-      if (end > i + mark.length) { const tag = mark.length === 2 ? (mark === '~~' ? 'del' : 'strong') : 'em'; out += `<${tag}>${inline(source.slice(i + mark.length, end), refs)}</${tag}>`; i = end + mark.length; continue; }
+      if (end > i + mark.length) { const tag = mark === '~~' ? 'del' : 'strong'; out += `<${tag}>${inline(source.slice(i + mark.length, end), refs)}</${tag}>`; i = end + mark.length; continue; }
     }
     if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1); if (/^<\/?[A-Za-z][^>]*>$/.test(raw) || /^<!--/.test(raw) || /^<https?:\/\/[^ >]+>$/.test(raw) || /^<[^ <>@]+@[^ <>]+>$/.test(raw)) { out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#\d{1,7}|#x[\da-f]{1,6}|[A-Za-z][A-Za-z\d]+);/i); if (m) { out += m[0]; i += m[0].length; continue; } }
