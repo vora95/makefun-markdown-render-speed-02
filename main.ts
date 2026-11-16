@@ -1,3 +1,10 @@
+// Batch entry point for the make.fun markdown-render-speed-02 bounty.
+//
+// Reads every case from `cases.json` in MAKEFUN_INPUT_DIR (default `/input`),
+// renders each Markdown string with `parse` from `./parse.js`, and writes the
+// resulting HTML strings as a JSON array to `html.json` in MAKEFUN_OUTPUT_DIR
+// (default `/output`). Each case is parsed independently; no state is shared
+// between cases.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse } from './parse.js';

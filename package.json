@@ -1,9 +1,9 @@
 {
-  "description": "Independent Markdown renderer with block, list, fence, table, reference, and inline parsing",
+  "description": "Independent Markdown renderer with block, list, fence, table, reference, and inline parsing (marked-compatible fork, tuned for the make.fun render-speed bounty)",
   "exports": "./parse.js",
   "license": "MIT",
   "name": "markdown-render-speed-02-entry",
   "private": true,
   "type": "module",
-  "version": "1.4.6"
+  "version": "1.4.7"
 }
