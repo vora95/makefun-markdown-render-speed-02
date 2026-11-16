@@ -1,8 +1,10 @@
-// Shared per-parse flag: a raw <a> tag seen by the inline lexer leaves
-// marked in "inside a link" state, which suppresses bare-URL and email
-// autolinks for the rest of the document until a raw </a> is seen. It is
-// stored on the per-parse link-definitions object so it survives the
-// recursive inline calls but is reset for every fresh parse.
+// Shared per-parse flag: a raw <a ...> tag (marked's startATag: `<a`
+// followed by a space) seen by the inline lexer leaves marked in
+// "inside a link" state, which suppresses bare-URL and email autolinks
+// for the rest of the document until a raw </a> (endATag, exact) is
+// seen. A self-closing <a/> or bare <a> does NOT set it. It is stored
+// on the per-parse link-definitions object so it survives the recursive
+// inline calls but is reset for every fresh parse.
 const IN_LINK = Symbol('inLink');
 
 // Small, dependency-free Markdown renderer. Parsing is performed afresh for each call.
@@ -417,7 +419,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       lit += '~'.repeat(n); i += n; continue;
     }
 
-    if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { flush(); out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { flush(); out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { flush(); out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/)[^ <>]+$/i.test(inner)) { flush(); out += `<a href="${escapeHtml(angleDestination(inner))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { flush(); out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (validInlineTag(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { if (/^<a(?:[\s/>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = true; else if (/^<\/a(?:[\s>]|$)/i.test(raw)) linkDefinitions[IN_LINK] = false; flush(); out += raw; i = e + 1; continue; } } }
+    if (c === '<') { if (source.startsWith('<![CDATA[', i)) { const end = source.indexOf(']]>', i + 9); if (end >= 0) { flush(); out += source.slice(i, end + 3); i = end + 3; continue; } } const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { flush(); out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { flush(); out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/)[^ <>]+$/i.test(inner)) { flush(); out += `<a href="${escapeHtml(angleDestination(inner))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (!inner.includes('\\') && /^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { flush(); out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (validInlineTag(raw) || /^<!--/.test(raw) || /^<\?[\s\S]*\?>$/.test(raw) || /^<![A-Za-z][\s\S]*>$/.test(raw) || /^<!\[CDATA\[[\s\S]*\]\]>$/.test(raw)) { if (/^<a /i.test(raw)) linkDefinitions[IN_LINK] = true; else if (/^<\/a>/i.test(raw)) linkDefinitions[IN_LINK] = false; flush(); out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]*);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); flush(); out += escapeHtml(!cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp)); } else { flush(); out += m[0]; } i += m[0].length; continue; } }
     if (c === '\n') {
       flush();
