@@ -8,6 +8,8 @@
 //
 // Builder #2 session (16 Nov 2026, recording 01a1e3e1): `parse` is the tuned
 // fork at 720/720 on the kit comparator; this entry point is unchanged.
+// Builder #3 session (16 Nov 2026, recording 01a1e44c): `parse` further tuned
+// (guard split, closure hoisting, pre-pass skips); still 720/720, entry point unchanged.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse } from './parse.js';

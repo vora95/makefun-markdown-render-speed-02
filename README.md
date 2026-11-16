@@ -130,3 +130,52 @@ for emphasis marks, removing a `marks.slice` allocation, hoisting the
 Known pre-existing gap (NOT in the 720 set, left alone): `a=b@c.com` — marked
 links only `b@c.com`, the fork links `a=b@c.com` (its email local-part class
 includes `=`; marked's chunking stops at `=`).
+
+## Builder #3 session (16 Nov 2026, recording 01a1e44c)
+
+Started from Builder #2's 720/720 state (ratio ~1.2–1.3x wall, ~1.05–1.25x CPU).
+Profiling (docs dominate: 40 docs, 2.85M chars, 43K lines; the 680 spec cases
+are only 16K chars): inline render loop ~47% of docs time, block traversal
+~40% (including a 14.3% definitions-only second pass — all 40 docs trigger it,
+247 top-level defs + 146 nested quote/list recursions, so it cannot be
+skipped), pre-pass ~5%, pairing ~5%. 60% of inline calls take the plain fast
+path; 38% of full-path calls contain no `*`/`_`/`~`.
+
+Changes kept (each verified 720/720 on the kit comparator before commit):
+- Batch A (block): `blank()` manual loop, `leadSpaces()` replacing `/^ */`
+  matches, `hasDefLine` gated on `]:`, `paragraphInterrupt` regex hoisted to
+  module scope.
+- Batch B (inline): `word`/`punct`/`tagEnd`/`unclosedTickCount`/`label*`
+  hoisted to module scope (9 closures per call removed; dead
+  `isPunctuation`/`isWhitespace` deleted); pre-pass skipped when the source
+  has no `*`/`_`/`~`; anchors skipped when marks are empty; render-loop
+  events Map guarded by `hasEvents`; `shiftedClosers` slice replaced by
+  direct indexing.
+- Guard split: the plain-prose gate's single combined regex (which re-tried
+  its email alternative at every word start) split into memchr checks
+  (markup char class, `'  \n'` hard break, `'://'` + `/www\./i`, email
+  superset `'@'` with a `'.'` after it — sound: a false positive only costs
+  a full-path run, never a wrong fast path; verified on a 43-case battery,
+  0 unsound).
+
+Attempted and REVERTED after A/B showed no gain: first-char dispatch in the
+paragraph-continuation loop (`plainContinuation`) — two bench sessions leaned
+negative/neutral; table-row skipping in the definitions-only pass — an
+isolated measurement showed the defs pass unchanged (758 vs 738 ms), i.e.
+tables are a negligible share of it.
+
+Measurement honesty: this VM is heavily throttled (1.5 shared CPUs, other
+agents running) and even CPU-time medians swing ±20–40% between sessions
+(marked itself measured 717–1179 ms CPU per full set across sessions), so
+small effects cannot be resolved locally. Final numbers for the kept state
+(commit 35de252): comparator 720/720; CPU bench (fresh process, forced GC
+before each round, 10 rounds): fork 907 ms vs marked 1166 ms (ratio 0.78);
+earlier CPU sessions 0.72–1.04; alternating wall bench2 median ratio 1.27
+(rounds 0.63–3.07); sequential comparator `--bench` ratio 1.15. Verdict: the
+fork is approximately at parity with marked — plausibly slightly faster on
+CPU time (the grader's metric), slightly slower on throttled wall time.
+Ratio < 1.0 is NOT conclusively achieved; the remaining gap needs a
+structural inline/block rewrite (M3/M4), judged too risky for the time left.
+Note: Batches A/B were applied via shell scripts in this session, the guard
+split and both reverts via the edit tool; the guard split + reverts are the
+parse.js edits carried by the edit tool in this recording.
