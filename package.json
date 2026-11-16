@@ -1,5 +1,9 @@
 {
   "type": "module",
   "name": "markdown-render-speed-02-entry",
-  "private": true
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependency-free modified Markdown renderer",
+  "license": "MIT",
+  "exports": "./parse.js"
 }

@@ -1,17 +1,26 @@
-# Markdown render speed 02
+# Markdown renderer
 
-A dependency-free Markdown renderer and entrypoint for the make.fun Markdown rendering bounty. `parse.js` exports `parse(markdown)`; `main.ts` renders the input case array to `html.json`.
+This repository contains a compact, dependency free Markdown to HTML renderer.
+Its public entry point is `parse(markdown)` in `parse.js`; it returns the HTML
+string for one Markdown input and keeps no state between calls.
 
-This project is a modified, performance-focused fork of marked 18.1.3. The fork retains the MIT licensing and attribution required for portions derived from marked; see [NOTICE](NOTICE) and [LICENSE](LICENSE).
+## Running the batch driver
 
-[![make.fun](https://make.fun/badge/markdown-render-speed-02.svg)](https://make.fun/bounty/markdown-render-speed-02)
-[![rank](https://make.fun/badge/markdown-render-speed-02/vora95/makefun-markdown-render-speed-02/rank.svg)](https://make.fun/bounty/markdown-render-speed-02)
-[![reward](https://make.fun/badge/markdown-render-speed-02/vora95/makefun-markdown-render-speed-02/reward.svg)](https://make.fun/bounty/markdown-render-speed-02)
+`main.ts` reads a JSON array from `cases.json` in the input directory. Each row
+has an `id` and a `markdown` property. It writes a JSON array of rendered HTML
+strings to `html.json` in the output directory.
 
-## Usage
+```sh
+node main.ts
+```
 
-Run `node main.ts`. Set `MAKEFUN_INPUT_DIR` and `MAKEFUN_OUTPUT_DIR` to select input and output directories; defaults are `/input` and `/output`. The input directory must contain `cases.json` with objects containing `markdown` strings.
+The driver defaults to `/input` and `/output`. For local runs, set
+`MAKEFUN_INPUT_DIR` and `MAKEFUN_OUTPUT_DIR` to directories containing the
+input and receiving the output. The runtime uses Node built in modules only.
 
-## License
+## Attribution and license
 
-MIT. The renderer is a credited and modified marked fork; see NOTICE for upstream attribution.
+This is an independently structured, modified implementation for the
+Markdown Render Speed 02 exercise. It is credited as a modified fork of
+marked 18.1.3; see [NOTICE](NOTICE) for upstream attribution and [LICENSE](LICENSE)
+for the MIT terms.

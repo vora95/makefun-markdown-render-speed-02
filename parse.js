@@ -3,7 +3,7 @@ const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>
 
 function inline(source, linkDefinitions = Object.create(null)) {
   // Text without inline delimiters can bypass the token scanner entirely.
-  if (!/[*_`\[\]\\!~<&]/.test(source)) return escapeHtml(source);
+  if (!/[*_`\[\]\\!~<&]|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
   const isPunctuation = c => !!c && /[\p{P}\p{S}]/u.test(c);
   const isWhitespace = c => !!c && /\s/u.test(c);
   const findStarPair = (s, i) => {
@@ -81,6 +81,28 @@ function inline(source, linkDefinitions = Object.create(null)) {
   let out = '';
   for (let i = 0; i < source.length;) {
     const c = source[i];
+    // GFM recognizes URL and email forms in ordinary text. Keep the scan
+    // anchored at the current cursor so punctuation and adjacent markup stay
+    // available to the normal inline scanner.
+    if (c !== '<') {
+      const tail = source.slice(i);
+      const candidate = tail.match(/^(?:https?:\/\/|ftp:\/\/)[^\s<>]+|^www\.[^\s<>]+|^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+/i);
+      if (candidate) {
+        let value = candidate[0];
+        while (/[.,:;!?]$/.test(value)) value = value.slice(0, -1);
+        while (/[)\]}]$/.test(value)) {
+          const ch = value.at(-1), pair = ch === ')' ? '(' : ch === ']' ? '[' : '{';
+          if (value.split(pair).length > value.split(ch).length) break;
+          value = value.slice(0, -1);
+        }
+        if (value) {
+          const email = value.includes('@') && !/^[a-z]+:\/\//i.test(value);
+          const href = email ? 'mailto:' + value : /^www\./i.test(value) ? 'http://' + value : value;
+          out += `<a href="${escapeHtml(href)}">${escapeHtml(value)}</a>`;
+          i += value.length; continue;
+        }
+      }
+    }
     // Inline links and images, including the common reference forms.
     if (c === '!' && source[i + 1] === '[' || c === '[') {
       const image = c === '!'; const start = i + (image ? 2 : 1);
@@ -91,7 +113,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
         if (source[end] === '(') {
           let p = end + 1; while (source[p] === ' ') p++;
           let raw = '', quoted = false, q = '';
-          if (source[p] === '<') { const z = source.indexOf('>', p + 1); if (z >= 0) { raw = source.slice(p + 1, z); p = z + 1; } }
+          if (source[p] === '<') { const z = source.indexOf('>', p + 1), lineEnd = source.indexOf('\n', p + 1); if (z >= 0 && (lineEnd < 0 || z < lineEnd)) { raw = source.slice(p + 1, z); p = z + 1; } }
           else { const b = p; let par = 0; while (p < source.length && (par || !/[\s)]/.test(source[p]))) { if (source[p] === '(') par++; if (source[p] === ')') par--; p++; } raw = source.slice(b, p); }
           while (source[p] === ' ') p++;
           if (/['"(]/.test(source[p])) { q = source[p] === '(' ? ')' : source[p]; p++; const z = source.indexOf(q, p); if (z >= 0) { title = source.slice(p, z); p = z + 1; while (source[p] === ' ') p++; } }
@@ -105,6 +127,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
       }
     }
     if (c === '\\' && i + 1 < source.length) {
+      if (source[i + 1] === '\n' && i + 2 < source.length) { out += '<br>'; i += 2; continue; }
       if (/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(source[i + 1])) { out += escapeHtml(source[i + 1]); i += 2; continue; }
     }
     if (c === '`') {
@@ -136,12 +159,13 @@ function inline(source, linkDefinitions = Object.create(null)) {
       const end = source.indexOf(mark, i + mark.length);
       if (end > i + mark.length) { const tag = mark === '~~' ? 'del' : 'strong'; out += `<${tag}>${inline(source.slice(i + mark.length, end), linkDefinitions)}</${tag}>`; i = end + mark.length; continue; }
     }
-    if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(href)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^<\/?[A-Za-z][^>]*>$/.test(raw) || /^<!--/.test(raw)) { out += raw; i = e + 1; continue; } } }
+    if (c === '<') { const e = source.indexOf('>', i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(href)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^<\/?[A-Za-z][^>]*>$/.test(raw) || /^<!--/.test(raw)) { out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]+);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += !cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp); } else out += m[0]; i += m[0].length; continue; } }
     if (c === '\n') {
       let spaces = 0; for (let p = out.length - 1; p >= 0 && out[p] === ' '; p--) spaces++;
-      if (spaces >= 2) { out = out.slice(0, -spaces); out += '<br>'; }
-      out += '\n'; i++; continue;
+      if (spaces >= 2 && i + 1 < source.length) { out = out.slice(0, -spaces); out += '<br>'; }
+      else out += '\n';
+      i++; continue;
     }
     out += escapeHtml(c); i++;
   }
@@ -185,7 +209,10 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
         const end = html.type === 1 ? new RegExp(`<\\/${html.tag}\\s*>`, 'i') : html.type === 2 ? /-->/ : html.type === 3 ? /\?>/ : html.type === 4 ? />/ : /\]\]>/;
         while (i < blockLines.length && !end.test(blockLines[i++])) {}
       } else { while (i < blockLines.length && !blank(blockLines[i])) i++; }
-      out.push(blockLines.slice(start, i).join('\n') + (i < blockLines.length || src.endsWith('\n') ? '\n' : '')); continue;
+      // Comment blocks end at their closing delimiter. When the next block is a
+      // paragraph, marked joins the delimiter directly to the paragraph tag.
+      const endedComment = html.type === 2 && i > start && /-->\s*$/.test(blockLines[i - 1]);
+      out.push(blockLines.slice(start, i).join('\n') + (!endedComment && (i < blockLines.length || src.endsWith('\n')) ? '\n' : '')); continue;
     }
     // Indented code blocks are recognized before other block constructs.
     if (/^(?: {4,}|\t)/.test(blockLines[i])) {

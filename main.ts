@@ -1,11 +1,26 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 import { parse } from './parse.js';
 
-type CaseRow = { id: string; markdown: string };
-const input = process.env.MAKEFUN_INPUT_DIR || '/input';
-const output = process.env.MAKEFUN_OUTPUT_DIR || '/output';
-const rows = JSON.parse(readFileSync(join(input, 'cases.json'), 'utf8')) as CaseRow[];
-const rendered = rows.map(({ markdown }) => parse(markdown));
-mkdirSync(output, { recursive: true });
-writeFileSync(join(output, 'html.json'), JSON.stringify(rendered));
+interface MarkdownCase { id: string; markdown: string }
+
+function directory(variable: string, fallback: string): string {
+  const configured = process.env[variable];
+  return resolve(configured && configured.length ? configured : fallback);
+}
+
+function renderBatch(): void {
+  const inputFile = resolve(directory('MAKEFUN_INPUT_DIR', '/input'), 'cases.json');
+  const outputFile = resolve(directory('MAKEFUN_OUTPUT_DIR', '/output'), 'html.json');
+  const cases = JSON.parse(readFileSync(inputFile, 'utf8')) as MarkdownCase[];
+  const html: string[] = new Array(cases.length);
+
+  for (let index = 0; index < cases.length; index++) {
+    html[index] = parse(cases[index].markdown);
+  }
+
+  mkdirSync(directory('MAKEFUN_OUTPUT_DIR', '/output'), { recursive: true });
+  writeFileSync(outputFile, JSON.stringify(html), 'utf8');
+}
+
+renderBatch();
