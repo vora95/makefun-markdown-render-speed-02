@@ -1,9 +1,9 @@
 {
   "type": "module",
   "name": "markdown-render-speed-02-entry",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
-  "description": "Independent marked-compatible renderer with a delimiter-stack emphasis pass",
+  "description": "Independent Markdown renderer with block parsing, reference links, and delimiter-aware inline parsing",
   "license": "MIT",
   "exports": "./parse.js"
 }
