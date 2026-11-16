@@ -25,3 +25,6 @@ The current emphasis pass independently collects delimiter runs, applies
 flanking and run-of-three checks, and emits paired tags while preserving unused
 markers. This implementation remains a modified fork and does not include the
 upstream parser distribution.
+
+
+This revision also adjusts HTML block separators, list looseness, and autolink URL encoding in independently authored parser code.
