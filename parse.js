@@ -462,7 +462,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
       const closeFence = new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
       while (j < blockLines.length && !closeFence.test(blockLines[j])) j++;
-      const body = rawLines.slice(i + 1, j).map(line => fence[0] === '~' ? line : line.replace(new RegExp('^ {0,' + indent + '}'), '')).join('\n');
+      const dedentFenceLine = (line) => { let k = 0; while (k < indent && k < line.length && (line[k] === ' ' || line[k] === '\t')) k++; return line.slice(k); };
+      const body = rawLines.slice(i + 1, j).map(line => fence[0] === '~' ? line : dedentFenceLine(line)).join('\n');
       const language = lang.replace(/\\([\p{P}\p{S}])/gu, '$1');
       out.push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
@@ -470,7 +471,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     if ((m = quoteLine(blockLines[i]))) {
       const q = []; let quoteFence = false; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
-        if (content.includes('\t')) { const startCol=blockLines[i].length-content.length; const beforeChar=blockLines[i][startCol-1]; let col=startCol,expanded=''; for(const ch of content){if(ch==='\t'){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{expanded+=ch;col++;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); content=expanded; }
+        if (content.includes('\t')) { const startCol=blockLines[i].length-content.length; const beforeChar=blockLines[i][startCol-1]; let col=startCol,expanded='',seenNonWs=false; for(const ch of content){if(ch==='\t'&&!seenNonWs){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{if(ch==='\t')expanded+='\t';else expanded+=ch;col++;if(ch!==' '&&ch!=='\t')seenNonWs=true;}} if (beforeChar==='>' && expanded.startsWith(' ')) expanded=expanded.slice(1); content=expanded; }
         if (content === ' ' && q.some(line=>line.trim())) content='\u0001';
         const fm = content.match(/^ {0,3}(`{3,}|~{3,})/);
         if (fm && !(fm[1][0] === '`' && content.slice(fm[0].length).includes('`'))) quoteFence = !quoteFence;
