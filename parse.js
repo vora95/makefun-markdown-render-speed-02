@@ -660,6 +660,38 @@ const nestedMarkerAt = line => {
   return after === ' ' || after === '\t';
 };
 
+// Exact manual form of the ATX heading test
+// /^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/ plus the closing-hash rules:
+// a line holding only opening + closing hashes has an empty body, else
+// a trailing run of # preceded by whitespace is stripped from the body.
+// Returns { level, body } or null.
+const headingAt = line => {
+  let i = 0;
+  while (i < 3 && line[i] === ' ') i++;
+  let h = i;
+  while (line[h] === '#') h++;
+  const level = h - i;
+  if (level < 1 || level > 6) return null;
+  const after = line[h];
+  if (after !== undefined && after !== ' ' && after !== '\t') return null;
+  let b = h;
+  while (line[b] === ' ' || line[b] === '\t') b++;
+  // m[2] is the lazy (.*?) before the trailing \s*$; the original then
+  // trims it, which also strips any leading whitespace the [ \t]+
+  // separator did not consume (e.g. \f). Slicing the rest and trimming
+  // is exactly m[2].trim().
+  const rest = line.slice(b);
+  let body = rest.trim();
+  // A line holding only hashes (rest = hashes + optional spaces/tabs to
+  // EOL) has an empty body; otherwise strip one trailing run of #
+  // preceded by whitespace. The only-hashes test runs on the untrimmed
+  // rest: a trailing \f after the closing hashes defeats the whole-line
+  // test even though trim would hide it.
+  if (/^#+[ \t]*$/.test(rest)) body = '';
+  else body = body.replace(/[ \t]+#+$/, '');
+  return { level, body };
+};
+
 function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false, defsOnly = false, stripTopPara = false, lastKind = null) {
   // Fast native scans replace a regex pass when the source has no CR or
   // tab at all (the common case): the \r replace and the leading-tab
@@ -713,8 +745,17 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
   while (i < blockLines.length) {
     if (blank(blockLines[i])) { i++; continue; }
     let m;
-    // GFM tables: a pipe header followed by a delimiter row.
-    if (i + 1 < blockLines.length && blockLines[i].includes('|') && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/.test(blockLines[i + 1]) && blockLines[i].trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).length === blockLines[i + 1].trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).length) {
+    // First-char dispatch (M2): most block rules can only match when the
+    // line's first non-space character is one of a few, so compute the
+    // indent and first character once per line and let each branch skip
+    // its regex when the character rules the branch out. A guard only
+    // ever skips a branch whose regex provably cannot match; the branch
+    // itself still decides.
+    const lineLead = leadSpaces(blockLines[i]);
+    const firstCh = blockLines[i][lineLead];
+    // GFM tables: a pipe header followed by a delimiter row. A delimiter
+    // row must hold a '-', so skip its regex when the next line has none.
+    if (i + 1 < blockLines.length && blockLines[i].includes('|') && blockLines[i + 1].includes('-') && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/.test(blockLines[i + 1]) && blockLines[i].trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).length === blockLines[i + 1].trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).length) {
       const split = row => { row = row.trim().replace(/^\|/, '').replace(/\|$/, ''); return row.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|')); };
       const heads = split(blockLines[i]), aligns = split(blockLines[i + 1]).map(c => c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : '');
       const row = (cells, tag) => `<tr>\n${heads.map((_, n) => { const a = aligns[n]; return `<${tag}${a ? ` align="${a}"` : ''}>${IL(cells[n] || '', linkDefinitions)}</${tag}>\n`; }).join('')}</tr>\n`;
@@ -723,7 +764,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       push(html + '</table>\n', 'table'); continue;
     }
     // Block HTML is passed through verbatim by marked; its contents are not parsed.
-    const htmlKind = htmlBlockOf(blockLines[i]);
+    // htmlBlockOf only matches when '<' follows at most 3 spaces.
+    const htmlKind = lineLead <= 3 && firstCh === '<' ? htmlBlockOf(blockLines[i]) : null;
     if (htmlKind) {
       const start = i;
       const kind = htmlKind;
@@ -749,8 +791,9 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       if (!defsOnly) push(raw, 'html'); continue;
     }
     // Indented code blocks are recognized before other block constructs.
-    const nestedFenceCandidate = nestedContext && /^ {4,20}(?:`{3,}|~{3,})/.test(blockLines[i]);
-    if (/^(?: {4,}|\t)/.test(blockLines[i]) && !nestedFenceCandidate) {
+    // A nested fence candidate needs 4-20 spaces then a fence run.
+    const nestedFenceCandidate = nestedContext && lineLead >= 4 && lineLead <= 20 && (firstCh === '`' || firstCh === '~') && /^ {4,20}(?:`{3,}|~{3,})/.test(blockLines[i]);
+    if ((lineLead >= 4 || blockLines[i][0] === '\t') && !nestedFenceCandidate) {
       const code = [];
       while (i < blockLines.length) {
         if (/^(?: {4,}|\t)/.test(blockLines[i])) {
@@ -766,18 +809,19 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       while (code.length && code[code.length - 1] === '') code.pop();
       if (!defsOnly) push(`<pre><code>${escapeHtml(code.join('\n'))}${code.length ? '\n' : ''}</code></pre>\n`, 'fence'); continue;
     }
-    if ((m = blockLines[i].match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/))) { const d = m[1].length; let body = m[2].trim(); if (/^ {0,3}#{1,6}[ \t]+#+[ \t]*$/.test(blockLines[i])) body = ''; else body = body.replace(/[ \t]+#+[ \t]*$/, ''); push(`<h${d}>${IL(body, linkDefinitions)}</h${d}>\n`, 'heading'); i++; continue; }
-    if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) { push('<hr>\n', 'hr'); i++; continue; }
-    if ((m = blockLines[i].match(nestedContext ? /^( {0,20})(`{3,}|~{3,})/ : /^( {0,3})(`{3,}|~{3,})/)) && !(m[2][0] === '`' && blockLines[i].slice(m[0].length).includes('`'))) {
-      const indent = m[1].length, fence = m[2], lang = blockLines[i].slice(m[0].length).trim().split(/[ \t]/)[0]; let j = i + 1;
-      const closeFence = new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$');
-      while (j < blockLines.length && !closeFence.test(blockLines[j])) j++;
+    const heading = firstCh === '#' ? headingAt(blockLines[i]) : null;
+    if (heading) { push(`<h${heading.level}>${IL(heading.body, linkDefinitions)}</h${heading.level}>\n`, 'heading'); i++; continue; }
+    if ((firstCh === '*' || firstCh === '-' || firstCh === '_') && isHrLine(blockLines[i])) { push('<hr>\n', 'hr'); i++; continue; }
+    const fenceOpen = (firstCh === '`' || firstCh === '~') ? fenceOpenAt(blockLines[i], nestedContext ? 20 : 3) : null;
+    if (fenceOpen) {
+      const indent = fenceOpen.indent, fence = fenceOpen.char.repeat(fenceOpen.len), lang = fenceOpen.info.trim().split(/[ \t]/)[0]; let j = i + 1;
+      while (j < blockLines.length && !fenceCloseAt(blockLines[j], fenceOpen.char, fenceOpen.len, 3)) j++;
       const dedentFenceLine = (line) => { let k = 0; while (k < indent && k < line.length && (line[k] === ' ' || line[k] === '\t')) k++; return line.slice(k); };
       const body = rawLines.slice(i + 1, j).map(line => fence[0] === '~' ? line : dedentFenceLine(line)).join('\n');
       const language = lang.replace(/\\([\p{P}\p{S}])/gu, '$1');
       if (!defsOnly) push(`<pre><code${language ? ` class="language-${escapeAttribute(language)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`, 'fence'); i = Math.min(j + 1, blockLines.length); continue;
     }
-    if ((m = quoteLine(blockLines[i]))) {
+    if (firstCh === '>' && (m = quoteLine(blockLines[i]))) {
       const q = []; let quoteFenceChar = '', quoteFenceLen = 0; while (i < blockLines.length && (m = quoteLine(blockLines[i]))) {
         let content=m[1];
         content=expandQuoteTabs(blockLines[i], content);
@@ -844,7 +888,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       }
       continue;
     }
-    const listStart = listMarkerAt(blockLines[i], true);
+    const listStart = (firstCh === '-' || firstCh === '+' || firstCh === '*' || (firstCh >= '0' && firstCh <= '9')) ? listMarkerAt(blockLines[i], true) : null;
     if (listStart && !isHrLine(blockLines[i])) {
       const ordered = listStart.ordered, tag = ordered ? 'ol' : 'ul';
       const marker = listStart.marker, markerIndent = listStart.indent;
@@ -987,7 +1031,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       if (!hasLooseItems) htmlItems = htmlItems.replace(/<li>\n(?=<(?:blockquote|ul|ol)>)/g, '<li>');
       push(`<${tag}${ordered && startNumber !== 1 ? ` start="${startNumber}"` : ''}>\n${htmlItems}</${tag}>\n`, 'list'); continue;
     }
-    const definitionStart = blockLines[i].match(/^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(.*)$/);
+    const definitionStart = firstCh === '[' ? blockLines[i].match(/^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(.*)$/) : null;
     if (definitionStart && definitionStart[1].trim() && !/(^|[^\\])\[/.test(definitionStart[1])) {
       const rawLabel = definitionStart[1]; let rest = definitionStart[2], consumedLines = 1;
       if (!rest.trim() && i + 1 < blockLines.length && /^\s*\S/.test(blockLines[i + 1])) { rest = blockLines[i + 1].trim(); consumedLines++; }
