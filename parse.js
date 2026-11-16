@@ -231,7 +231,17 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
           if (/^mailto:.*[-_]$/i.test(value)) value = '';
           while (/[)\]}]$/.test(value)) {
             const ch = value.at(-1), pair = ch === ')' ? '(' : ch === ']' ? '[' : '{';
-            if (value.split(pair).length >= value.split(ch).length) break;
+            // A trailing closer is kept iff it closes an opener that is
+            // still open just before it. Scan the value without the
+            // trailing closer, clamping depth at 0 so an unmatched closer
+            // early in the URL (e.g. the `)` in `a)](b)`) does not hide
+            // the opener the trailing closer belongs to.
+            let depth = 0;
+            for (const c of value.slice(0, -1)) {
+              if (c === pair) depth++;
+              else if (c === ch) depth = Math.max(0, depth - 1);
+            }
+            if (depth >= 1) break;
             value = value.slice(0, -1);
           }
         } while (value && value !== prevValue);
