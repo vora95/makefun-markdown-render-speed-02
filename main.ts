@@ -5,6 +5,9 @@
 // resulting HTML strings as a JSON array to `html.json` in MAKEFUN_OUTPUT_DIR
 // (default `/output`). Each case is parsed independently; no state is shared
 // between cases.
+//
+// Builder #2 session (16 Nov 2026, recording 01a1e3e1): `parse` is the tuned
+// fork at 720/720 on the kit comparator; this entry point is unchanged.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse } from './parse.js';

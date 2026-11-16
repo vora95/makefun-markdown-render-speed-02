@@ -69,3 +69,64 @@ marked ~2.7 s (about 4.3x slower). The plain-paragraph fast path already
 exists in `inline`; closing the gap needs the M1–M5 work (fast paths,
 regex hoisting, dispatch, tokenizer/delimiter-stack rewrites) and was not
 reached in this session.
+
+## Builder #2 session (16 Nov 2026, recording 01a1e3e1)
+
+A second builder session raised the comparator grade from 715/720 to
+**720/720 (680/680 spec cases, 40/40 generated documents)** — the
+correctness gate is met. Fixes landed, each verified against the kit
+comparator after every change:
+
+- Lists (doc-26): a nested-list marker at exactly the content indent is a
+  sublist continuation, not a new block (blank-line branch used `>`; now
+  `>=`).
+- Emphasis (doc-11): the `labelHasDefinedRef` pre-pass now also detects
+  defined shortcut references `[text]`, not only full/collapsed refs.
+- Blockquote + fence (doc-19): quote fence state tracks char and length
+  (a ```` ```json ```` line inside a `~~~~` fence no longer toggles it off);
+  a lazy line starting an HTML block (types 1–6) ends the quote.
+- Autolink (doc-08): bare-URL values use marked's exact GFM backpedal
+  regex until stable; autolink href uses `encodeURI` with the `%25` fix;
+  a `www.`-prefixed address is a URL, not an email.
+- Tags: `IN_LINK` is set only on `<a ` (literal space) and reset only on
+  exact `</a>`, per marked's tag tokenizer.
+- Lists, tight items (doc-04, the last failing doc): tight items render
+  their tokens concatenated — top-level `<p>` wrappers are stripped
+  (`stripTopPara`), and the newline before `</li>` is decided by the kind
+  of the last top-level block (`lastKind`: structural blocks keep it,
+  paragraphs and raw HTML do not). Verified against a 28-case battery
+  (comment/div/fence/heading/quote/nested-list/hr/table endings, tight +
+  loose, tasks).
+
+Speed work (all verified 720/720 after each change; A/B on the 40 generated
+documents, alternating rounds in one process, median + paired wins):
+
+- Sticky autolink scan + batched literal escaping in `inline`.
+- `identifyHtmlBlock` guarded on `<`; paragraph-interrupt regex hoisted.
+- Definitions-only first pass (skipped entirely when no `[label]:` line).
+- Per-line closures hoisted out of the block loop; final `<li>` replace
+  guarded.
+- Autolink word-scan (skip the regex for runs without `@`/`www.`/scheme)
+  and ASCII fast paths for word/punct/autolink-start.
+- Bulk literal runs in the render loop (`plainRunRe` chunk + indexOf-gated
+  autolink guard; the scheme guard is a bounded 32-char walk-back).
+- Skip the CR replace and tab-expansion map when the source has no CR/tab;
+  fence close regexes cached on the item-fence object at open time; manual
+  loops for the events/marks searches; a single `consumed` lookup.
+
+Speed (bench, median of the full 720-case set, same shared-CPU VM — absolute
+milliseconds vary a lot between runs because the machine is throttled, so
+ratios come from same-process alternating rounds): fork ~0.7–1.4 s vs marked
+~0.7–1.1 s, **about 1.2–1.3x slower** (bench2 median ratio 1.19–1.32x across
+runs; the sequential comparator `--bench` reports 1.58–1.82x, which is
+throttling-sensitive). The fork is under the 2.5 s absolute target but still
+slower than marked; the remaining gap needs a structural inline/block
+tokenizer rewrite (M3/M4), which was judged too risky for the remaining time.
+Micro-optimizations attempted and reverted after A/B showed no gain: splitting
+the plain-paragraph guard into indexOf/includes checks, a regex-jump pre-pass
+for emphasis marks, removing a `marks.slice` allocation, hoisting the
+`escapeHtml` map.
+
+Known pre-existing gap (NOT in the 720 set, left alone): `a=b@c.com` — marked
+links only `b@c.com`, the fork links `a=b@c.com` (its email local-part class
+includes `=`; marked's chunking stops at `=`).
