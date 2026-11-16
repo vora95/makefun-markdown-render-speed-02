@@ -180,10 +180,13 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             const closing = tags.find(tag => tag.startsWith('</em>') || tag.startsWith('</strong>'));
             if (!closing) continue;
             const openingTag = closing === '</em>' ? '<em>' : '<strong>';
-            const openingAt = [...events].find(([pos, values]) => pos > leftEdge && pos < at && values.includes(openingTag))?.[0];
+            // Manual loop = [...events].find(...) without the array copy.
+            let openingAt;
+            for (const [pos, values] of events) { if (pos > leftEdge && pos < at && values.includes(openingTag)) { openingAt = pos; break; } }
             if (openingAt === undefined || !/\s/.test(source[openingAt - 1] || '')) continue;
             attachedInnerExists = true;
-            const innerCloser = marks.find(m => m.start < at && at <= m.start + m.len);
+            let innerCloser;
+            for (const m of marks) { if (m.start < at && at <= m.start + m.len) { innerCloser = m; break; } }
             const innerLen = closing === '</em>' ? 1 : 2;
             const blockedByThrees = (a, b) => (a + b) % 3 === 0 && !(a % 3 === 0 && b % 3 === 0);
             const hasDeadIntervener = innerCloser && innerLen === 1 && marks.some(m => m.start > innerCloser.start + innerCloser.len && m.start < closer.start && !m.open);
@@ -230,8 +233,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   const flush = () => { if (lit) { out += escapeHtml(lit); lit = ''; } };
   for (let i = 0; i < source.length;) {
     if (events.has(i)) { flush(); out += events.get(i).join(''); }
-    if ((source[i] === '*' || source[i] === '_') && !consumed.has(i)) { lit += source[i]; i++; continue; }
-    if ((source[i] === '*' || source[i] === '_') && consumed.has(i)) { i++; continue; }
+    if (source[i] === '*' || source[i] === '_') { if (consumed.has(i)) { i++; } else { lit += source[i]; i++; } continue; }
     const c = source[i];
     // GFM recognizes URL and email forms in ordinary text. Keep the scan
     // anchored at the current cursor so punctuation and adjacent markup stay
@@ -467,9 +469,12 @@ const isFenceStart = line => {
 };
 
 function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false, defsOnly = false, stripTopPara = false, lastKind = null) {
-  const src = markdown.replace(/\r\n?/g, '\n');
+  // Fast native scans replace a regex pass when the source has no CR or
+  // tab at all (the common case): the \r replace and the leading-tab
+  // expansion map are both identity then, so skip them outright.
+  const src = markdown.includes('\r') ? markdown.replace(/\r\n?/g, '\n') : markdown;
   const rawLines = src.split('\n');
-  const blockLines = rawLines.map(line => { let col = 0, n = 0; while (n < line.length && (line[n] === ' ' || line[n] === '\t')) { if (line[n] === '\t') { const step = 4 - col % 4; line = line.slice(0, n) + ' '.repeat(step) + line.slice(n + 1); col += step; n += step; } else { col++; n++; } } return line; });
+  const blockLines = src.includes('\t') ? rawLines.map(line => { let col = 0, n = 0; while (n < line.length && (line[n] === ' ' || line[n] === '\t')) { if (line[n] === '\t') { const step = 4 - col % 4; line = line.slice(0, n) + ' '.repeat(step) + line.slice(n + 1); col += step; n += step; } else { col++; n++; } } return line; }) : rawLines;
   const out = [];
   // Records the kind of the last top-level block pushed, so a caller (the
   // list renderer) can tell a structural block (which marked renders with
