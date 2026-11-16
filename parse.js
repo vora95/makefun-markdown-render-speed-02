@@ -143,13 +143,14 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             const innerCloser = marks.find(m => m.start < at && at <= m.start + m.len);
             const innerLen = innerCloser ? innerCloser.len : 0;
             const blockedByThrees = (a, b) => (a + b) % 3 === 0 && !(a % 3 === 0 && b % 3 === 0);
-            if (blockedByThrees(innerLen, closer.len) || blockedByThrees(innerLen, opener.len)) { attachedInnerClose = true; break; }
+            const hasDeadIntervener = innerCloser && innerLen === 1 && marks.some(m => m.start > innerCloser.start + innerCloser.len && m.start < closer.start && !m.open);
+            if (!hasDeadIntervener && (blockedByThrees(innerLen, closer.len) || blockedByThrees(innerLen, opener.len))) { attachedInnerClose = true; break; }
           }
         }
         if (attachedInnerClose) continue;
         const remaining=closer.len-closer.usedClose-closer.usedOpen;
         if (opener.close && available===2 && remaining===1 && !closer.open) continue;
-        const both=closer.open;
+        const both=closer.open || opener.close;
         const blockedByRuleOfThree = both && (available+remaining)%3===0 && !(available%3===0 && remaining%3===0);
         if (blockedByRuleOfThree) continue;
         amount=available>=2 && remaining>=2 ? 2 : 1; found=oi; break;
