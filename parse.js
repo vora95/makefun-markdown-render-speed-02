@@ -83,6 +83,10 @@ function matchingTickEnd(s, from, count) {
 const word = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122); return /[\p{L}\p{N}]/u.test(c); };
 const punct = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
 const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };
+// Rule-of-three test on the amounts actually consumed in a pair, shared
+// by the emphasis pairing loop (it was re-allocated as a closure per
+// scanned event entry).
+const blockedByThrees = (a, b) => (a + b) % 3 === 0 && !(a % 3 === 0 && b % 3 === 0);
 const unclosedTickCount = (s) => { for (let i = 0; i < s.length;) { if (s[i] === '`') { let n = 1; while (s[i + n] === '`') n++; const e = matchingTickEnd(s, i + n, n); if (e < 0) return n; i = e + n; } else i++; } return 0; };
 const labelUnclosedInSource = (label, labelStart, source) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; if (n === 1) { const e = matchingTickEnd(source, labelStart + i + n, n); if (e < 0) return true; i = e - labelStart + n; } else { const e = matchingTickEnd(source, labelStart + i + n, n); i = e >= 0 ? e - labelStart + n : i + n; } } else i++; } return false; };
 const labelHasDefinedRef = (label, linkDefinitions) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; const e = matchingTickEnd(label, i + n, n); i = e >= 0 ? e + n : i + n; continue; } if (label[i] === '[' && label[i - 1] !== '!') { let cb = i + 1; while (cb < label.length && label[cb] !== ']') { if (label[cb] === '\\') cb++; cb++; } if (cb < label.length && label[cb + 1] === '[') { let cb2 = cb + 2; while (cb2 < label.length && label[cb2] !== ']') { if (label[cb2] === '\\') cb2++; cb2++; } if (cb2 < label.length) { const refText = label.slice(cb + 2, cb2); const key = (refText || label.slice(i + 1, cb)).replace(/\\([\\()[\\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) return true; i = cb2 + 1; continue; } } if (cb < label.length && label[cb + 1] !== '(' && label[cb + 1] !== '[') { const key = label.slice(i + 1, cb).replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) return true; } } i++; } return false; };
@@ -158,6 +162,18 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   const events = new Map();
   const consumed = new Set();
   const addEvent = (at, value) => { let a=events.get(at); if (!a) events.set(at,a=[]); a.push(value); };
+  // Positions of completed closing tags (</em> / </strong>), in
+  // completion order. The attached-inner check below only ever finds a
+  // closing tag, so when no closing position sits between a candidate
+  // opener and the closer, the whole events-Map scan is skipped outright
+  // — the scan would find nothing. When one is in range the full scan
+  // still runs unchanged, so semantics are identical (the scan's result
+  // is an OR over the closing tags in range; order does not matter).
+  const closeAts = [];
+  const hasCloseInRange = (lo, hi) => {
+    for (let k = 0; k < closeAts.length; k++) { const at = closeAts[k]; if (at > lo && at < hi) return true; }
+    return false;
+  };
   const anchors = [];
   for (let a = 0; marks.length && a < source.length; a++) if (source[a] === '[' && !(a && source[a - 1] === '!')) {
     let b = a + 1, depth = 0;
@@ -192,7 +208,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         // inner pair's amount comes from its tag, not its run length.
         const remainingForPair = closer.len - closer.usedClose - closer.usedOpen;
         const pairAmount = available >= 2 && remainingForPair >= 2 ? 2 : 1;
-        if (closer.ch === '*') {
+        if (closer.ch === '*' && hasCloseInRange(leftEdge, rightEdge)) {
           for (const [at, tags] of events) {
             if (at <= leftEdge || at >= rightEdge || !word(source[at] || '')) continue;
             const closing = tags.find(tag => tag.startsWith('</em>') || tag.startsWith('</strong>'));
@@ -206,7 +222,6 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             let innerCloser;
             for (const m of marks) { if (m.start < at && at <= m.start + m.len) { innerCloser = m; break; } }
             const innerLen = closing === '</em>' ? 1 : 2;
-            const blockedByThrees = (a, b) => (a + b) % 3 === 0 && !(a % 3 === 0 && b % 3 === 0);
             const hasDeadIntervener = innerCloser && innerLen === 1 && marks.some(m => m.start > innerCloser.start + innerCloser.len && m.start < closer.start && !m.open);
             if (closer.len % 3 !== 0 && !hasDeadIntervener && (blockedByThrees(innerLen, pairAmount) || blockedByThrees(innerLen, opener.len))) { attachedInnerClose = true; break; }
           }
@@ -228,7 +243,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       // start (leftover star outside).
       const closeAt=(foundAttachedInner && amount===2) ? closer.start+closer.len-closer.usedClose-amount : closer.start+closer.usedClose;
       if (anchors.some(([a,b]) => (a <= opener.start && opener.start < b) !== (a <= closer.start && closer.start < b))) break;
-      const tag=amount===2?'strong':'em'; addEvent(openAt,`<${tag}>`); addEvent(closeAt+amount,`</${tag}>`);
+      const tag=amount===2?'strong':'em'; addEvent(openAt,`<${tag}>`); addEvent(closeAt+amount,`</${tag}>`); closeAts.push(closeAt + amount);
       for(let q=openAt;q<openAt+amount;q++) consumed.add(q);
       for(let q=closeAt;q<closeAt+amount;q++) consumed.add(q);
       opener.usedOpen+=amount; closer.usedClose+=amount;
