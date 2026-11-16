@@ -135,7 +135,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   for (let ci=0; ci<marks.length; ci++) {
     const closer=marks[ci]; if (!closer.close) continue;
     while (closer.len-closer.usedClose > 0) {
-      let found=-1, amount=0;
+      let found=-1, amount=0, foundAttachedInner=false;
       for (let oi=ci-1; oi>=0; oi--) {
         const opener=marks[oi]; const available=opener.len-opener.usedOpen-opener.usedClose;
         if (opener.ch!==closer.ch || !opener.open || available<=0) continue;
@@ -146,7 +146,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         // after whitespace). Underscore outers are exempt: they span.
         const leftEdge = opener.start + opener.len;
         const rightEdge = closer.start;
-        let attachedInnerClose = false;
+        let attachedInnerClose = false, attachedInnerExists = false;
         // The mod-3 check must use the amounts that will actually be
         // consumed in this pair (1 for <em>, 2 for <strong>), not the full
         // run lengths: a trailing extra delimiter (e.g. the second * in
@@ -162,11 +162,12 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             const openingTag = closing === '</em>' ? '<em>' : '<strong>';
             const openingAt = [...events].find(([pos, values]) => pos > leftEdge && pos < at && values.includes(openingTag))?.[0];
             if (openingAt === undefined || !/\s/.test(source[openingAt - 1] || '')) continue;
+            attachedInnerExists = true;
             const innerCloser = marks.find(m => m.start < at && at <= m.start + m.len);
             const innerLen = closing === '</em>' ? 1 : 2;
             const blockedByThrees = (a, b) => (a + b) % 3 === 0 && !(a % 3 === 0 && b % 3 === 0);
             const hasDeadIntervener = innerCloser && innerLen === 1 && marks.some(m => m.start > innerCloser.start + innerCloser.len && m.start < closer.start && !m.open);
-            if (!hasDeadIntervener && (blockedByThrees(innerLen, pairAmount) || blockedByThrees(innerLen, opener.len))) { attachedInnerClose = true; break; }
+            if (closer.len % 3 !== 0 && !hasDeadIntervener && (blockedByThrees(innerLen, pairAmount) || blockedByThrees(innerLen, opener.len))) { attachedInnerClose = true; break; }
           }
         }
         if (attachedInnerClose) continue;
@@ -175,11 +176,16 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         const both=closer.open || opener.close;
         const blockedByRuleOfThree = both && (available+remaining)%3===0 && !(available%3===0 && remaining%3===0);
         if (blockedByRuleOfThree) continue;
-        amount=available>=2 && remaining>=2 ? 2 : 1; found=oi; break;
+        amount=available>=2 && remaining>=2 ? 2 : 1; found=oi; foundAttachedInner=attachedInnerExists; break;
       }
       if (found<0) break;
       const opener=marks[found], openAt=opener.start+opener.len-opener.usedClose-opener.usedOpen-amount;
-      const closeAt=closer.start+closer.usedClose+(shiftedClosers.has(ci) && amount === 1 ? closer.len - 1 : 0);
+      // A closer run partially consumed by a STRONG pair spanning an
+      // attached inner pair takes its delimiters from the END of the run
+      // (the leftover star stays inside the emphasis); an em pair, and
+      // any pair without an attached inner pair, takes them from the
+      // start (leftover star outside).
+      const closeAt=(foundAttachedInner && amount===2) ? closer.start+closer.len-closer.usedClose-amount : closer.start+closer.usedClose;
       if (anchors.some(([a,b]) => (a <= opener.start && opener.start < b) !== (a <= closer.start && closer.start < b))) break;
       const tag=amount===2?'strong':'em'; addEvent(openAt,`<${tag}>`); addEvent(closeAt+amount,`</${tag}>`);
       for(let q=openAt;q<openAt+amount;q++) consumed.add(q);
