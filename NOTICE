@@ -1,7 +1,4 @@
-This project is a modified fork informed by marked 18.1.3. Marked is Copyright
-(c) 2011-2024 marked contributors, distributed under the MIT License. Project:
-https://github.com/markedjs/marked
-
-The renderer in this repository has been independently modified for rendering
-speed and compatibility. Portions derived from marked remain under marked's MIT
-license. This repository's MIT license is in LICENSE.
+This codebase is a modified fork of marked 18.1.3, whose contributors hold
+copyright (c) 2011-2024. Marked is available at https://github.com/markedjs/marked
+under the MIT License. This project changes the parser for rendering speed.
+Portions derived from marked remain covered by marked's MIT license.

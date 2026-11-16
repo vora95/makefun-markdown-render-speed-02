@@ -396,6 +396,13 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const contentIndent = markerIndent + markerWidth;
       const startNumber = ordered ? Number.parseInt(marker, 10) : 1;
       const listItems = []; let hasLooseItems = false;
+      // Item continuations are gathered as source lines and normalized against
+      // the marker's content column at the point they enter the child parser.
+      const itemContent = (sourceLine, column) => {
+        let spaces = 0;
+        while (spaces < sourceLine.length && spaces < column && sourceLine[spaces] === ' ') spaces++;
+        return sourceLine.slice(spaces);
+      };
       while (i < blockLines.length) {
         if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
         const itemMatch = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/);
@@ -425,7 +432,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             const lead = blockLines[i].match(/^ */)[0].length;
             const close = new RegExp('^ {0,3}' + (itemFence.char[0] === '`' ? '`' : '~') + '{' + itemFence.char.length + ',}[ \\t]*$');
             const validClose = close.test(blockLines[i]);
-            if (validClose && lead >= indent) { body.push(blockLines[i].slice(indent)); itemFence = null; i++; continue; }
+            if (validClose && lead >= indent) { body.push(itemContent(blockLines[i], indent)); itemFence = null; i++; continue; }
             if (validClose) {
               body.push(itemFence.char);
               itemFence = null;
@@ -461,7 +468,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
           const lead = blockLines[i].match(/^ */)[0].length;
           if (emptyMarker && body.length === 1 && !body[0].trim() && lead > itemIndent && lead < indent) { body.push(blockLines[i].slice(lead)); trackFence(body[body.length - 1]); }
           else if (lead === 4 && itemIndent === 3 && /^ {4}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(blockLines[i])) body.push('\\' + blockLines[i].slice(lead));
-          else if (lead >= indent) { body.push(blockLines[i].slice(indent)); trackFence(body[body.length - 1]); }
+          else if (lead >= indent) { body.push(itemContent(blockLines[i], indent)); trackFence(body[body.length - 1]); }
           else if (lead > itemIndent && body.length && body.at(-1).trim() && lead < indent && !/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t]|>|```|~~~|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(blockLines[i])) body.push(blockLines[i].slice(lead));
           else if (lead === 0 && body.length && body.at(-1).trim() && !/^ {0,3}(?:#{1,6}(?:\s|$)|(?:[-+*]|\d{1,9}[.)])[ \t]|>|```|~~~|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(blockLines[i])) body.push(blockLines[i]);
           else break;
@@ -472,7 +479,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       let htmlItems = listItems.map(linesInItem => {
         const task = linesInItem[0]?.match(/^\[([ xX])\][ \t]+(.*)$/);
         if (task) linesInItem[0] = task[2];
-        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\n$/, '');
+        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, false, collectDefinitions).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
         if (!hasLooseItems && /^(?:<blockquote>|<ul>|<ol>)/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (!hasLooseItems && /^<h[1-6]>[\s\S]*<\/h[1-6]>$/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
