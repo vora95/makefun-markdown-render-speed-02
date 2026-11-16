@@ -77,11 +77,25 @@ function matchingTickEnd(s, from, count) {
   return -1;
 }
 
+// ASCII fast paths, hoisted out of inline() (were re-allocated as closures
+// on every call): ASCII letters/digits are \p{L}/\p{N}, ASCII punctuation
+// is \p{P}/\p{S}.
+const word = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122); return /[\p{L}\p{N}]/u.test(c); };
+const punct = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
+const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };
+const unclosedTickCount = (s) => { for (let i = 0; i < s.length;) { if (s[i] === '`') { let n = 1; while (s[i + n] === '`') n++; const e = matchingTickEnd(s, i + n, n); if (e < 0) return n; i = e + n; } else i++; } return 0; };
+const labelUnclosedInSource = (label, labelStart, source) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; if (n === 1) { const e = matchingTickEnd(source, labelStart + i + n, n); if (e < 0) return true; i = e - labelStart + n; } else { const e = matchingTickEnd(source, labelStart + i + n, n); i = e >= 0 ? e - labelStart + n : i + n; } } else i++; } return false; };
+const labelHasDefinedRef = (label, linkDefinitions) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; const e = matchingTickEnd(label, i + n, n); i = e >= 0 ? e + n : i + n; continue; } if (label[i] === '[' && label[i - 1] !== '!') { let cb = i + 1; while (cb < label.length && label[cb] !== ']') { if (label[cb] === '\\') cb++; cb++; } if (cb < label.length && label[cb + 1] === '[') { let cb2 = cb + 2; while (cb2 < label.length && label[cb2] !== ']') { if (label[cb2] === '\\') cb2++; cb2++; } if (cb2 < label.length) { const refText = label.slice(cb + 2, cb2); const key = (refText || label.slice(i + 1, cb)).replace(/\\([\\()[\\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) return true; i = cb2 + 1; continue; } } if (cb < label.length && label[cb + 1] !== '(' && label[cb + 1] !== '[') { const key = label.slice(i + 1, cb).replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) return true; } } i++; } return false; };
+
 function inline(source, linkDefinitions = Object.create(null), disableAutolinks = false) {
   // Plain prose can be escaped in one pass without building delimiter and
   // link state. Keep URL and email starters in the guard because GFM scans
   // those even when the punctuation trigger set is absent.
   if (!/[*_`\[\]\\!~<&]| {2,}\n|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
+  // The pre-pass only produces emphasis marks and <...> tag spans (the
+  // spans matter only to the `~` branch). With no *, _ or ~ in the source
+  // it can produce nothing the render loop needs, so skip its full scan.
+  const hasEmphChars = source.includes('*') || source.includes('_') || source.includes('~');
   // Resolve emphasis runs as a delimiter stack before rendering the other
   // inline tokens. Each run keeps its unused marker characters literal.
   const marks = [];
@@ -89,31 +103,24 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   // strikethrough is suppressed inside them too (marked swallows the
   // whole span as text, so no inline construct forms there).
   const tagSpans = [];
-  // ASCII fast paths (exact: ASCII letters/digits are \p{L}/\p{N}, ASCII
-  // punctuation is \p{P}/\p{S}, ASCII whitespace is the 6 \s chars).
-  const word = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122); return /[\p{L}\p{N}]/u.test(c); };
-  const punct = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
   // A link whose label holds an unclosed backtick run leaves marked inside
   // a code span: emphasis marks after the link up to the next backtick
   // run are suppressed (the link itself still forms).
   let suppressMarksUntil = -1;
-  const unclosedTickCount = (s) => { for (let i = 0; i < s.length;) { if (s[i] === '`') { let n = 1; while (s[i + n] === '`') n++; const e = matchingTickEnd(s, i + n, n); if (e < 0) return n; i = e + n; } else i++; } return 0; };
   // True when a backtick run inside a link label has no matching closer
   // anywhere later in the source: such a label never closes, so the
   // bracket is literal and its _/* marks must still be collected.
-  const labelUnclosedInSource = (label, labelStart) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; if (n === 1) { const e = matchingTickEnd(source, labelStart + i + n, n); if (e < 0) return true; i = e - labelStart + n; } else { const e = matchingTickEnd(source, labelStart + i + n, n); i = e >= 0 ? e - labelStart + n : i + n; } } else i++; } return false; };
   // A collapsed [text][] or full [text][ref] inside a link label blocks the
   // outer link when its key is defined, and so does a defined shortcut
   // [text] (same rule as the main render). The pre-pass must not skip such
   // a label's marks, or emphasis inside it can never form once the link
   // is blocked and the label is literal text.
-  const labelHasDefinedRef = (label) => { for (let i = 0; i < label.length;) { if (label[i] === '`') { let n = 1; while (label[i + n] === '`') n++; const e = matchingTickEnd(label, i + n, n); i = e >= 0 ? e + n : i + n; continue; } if (label[i] === '[' && label[i - 1] !== '!') { let cb = i + 1; while (cb < label.length && label[cb] !== ']') { if (label[cb] === '\\') cb++; cb++; } if (cb < label.length && label[cb + 1] === '[') { let cb2 = cb + 2; while (cb2 < label.length && label[cb2] !== ']') { if (label[cb2] === '\\') cb2++; cb2++; } if (cb2 < label.length) { const refText = label.slice(cb + 2, cb2); const key = (refText || label.slice(i + 1, cb)).replace(/\\([\\()[\\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) return true; i = cb2 + 1; continue; } } if (cb < label.length && label[cb + 1] !== '(' && label[cb + 1] !== '[') { const key = label.slice(i + 1, cb).replace(/\\([\\()[\]])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss'); if (key && linkDefinitions[key]) return true; } } i++; } return false; };
-  for (let p = 0; p < source.length;) {
+  for (let p = 0; hasEmphChars && p < source.length;) {
     const ch = source[p];
     if (ch === '\\' && p+1<source.length && /[\p{P}\p{S}]/u.test(source[p+1])) { p+=2; continue; }
     if (ch === '`') { let n = 1; while (source[p + n] === '`') n++; let e = matchingTickEnd(source, p + n, n); if (e >= 0) { p = e + n; continue; } p += n; continue; }
     if (ch === '<' && /[A-Za-z!/?]/.test(source[p + 1] || '')) { let q=p+1, quote=''; for(;q<source.length;q++){const x=source[q];if(quote){if(x===quote)quote='';}else if(x==='"'||x==="'")quote=x;else if(x==='>')break;} if(q<source.length){tagSpans.push([p, q+1]); p=q+1;continue;} }
-    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!labelUnclosedInSource(label, p+(ch==='!'?2:1)) && !/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label) && !labelHasDefinedRef(label)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
+    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){ const label=source.slice(p+(ch==='!'?2:1),q); if(!labelUnclosedInSource(label, p+(ch==='!'?2:1), source) && !/(?<!!)(?:\[[^\]]*\])\([^\n)]*\)/.test(label) && !labelHasDefinedRef(label, linkDefinitions)) { const tc = unclosedTickCount(label); if (tc > 0) { let nb = matchingTickEnd(source, z + 1, tc); if (nb < 0) nb = source.indexOf('`', z + 1); if (nb >= 0) suppressMarksUntil = nb; } p=z+1; continue; } } } }
     if (ch !== '*' && ch !== '_') { p++; continue; }
     if (suppressMarksUntil >= 0) { if (p < suppressMarksUntil) { let end = p + 1; while (source[end] === ch) end++; p = end; continue; } suppressMarksUntil = -1; }
     let end = p + 1; while (source[end] === ch) end++;
@@ -127,7 +134,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   // inner runs literal and lets the outer span consume the closer's last star.
   const shiftedClosers = new Set();
   for (let n = 0; n + 3 < marks.length; n++) {
-    const [outer, innerOpen, innerClose, outerClose] = marks.slice(n, n + 4);
+    const outer = marks[n], innerOpen = marks[n + 1], innerClose = marks[n + 2], outerClose = marks[n + 3];
     if (outer.ch === '*' && outer.len === 1 && outer.open && !outer.close &&
         innerOpen.ch === '*' && innerOpen.len === 2 && innerOpen.open && innerOpen.close &&
         innerClose.ch === '*' && innerClose.len === 2 && innerClose.close && !innerClose.open &&
@@ -142,7 +149,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   const consumed = new Set();
   const addEvent = (at, value) => { let a=events.get(at); if (!a) events.set(at,a=[]); a.push(value); };
   const anchors = [];
-  for (let a = 0; a < source.length; a++) if (source[a] === '[' && !(a && source[a - 1] === '!')) {
+  for (let a = 0; marks.length && a < source.length; a++) if (source[a] === '[' && !(a && source[a - 1] === '!')) {
     let b = a + 1, depth = 0;
     for (; b < source.length; b++) { if (source[b] === '\\') { b++; continue; } if (source[b] === '[') depth++; else if (source[b] === ']') { if (!depth) break; depth--; } }
     if (b >= source.length) continue;
@@ -220,9 +227,9 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
       for(let k=found+1;k<ci;k++) if(marks[k].open && marks[k].len>marks[k].usedOpen) marks[k].open=false;
     }
   }
-  const isPunctuation = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.includes(c); return /[\p{P}\p{S}]/u.test(c); };
-  const isWhitespace = c => { if (!c) return false; const k = c.charCodeAt(0); if (k < 128) return c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v'; return /\s/u.test(c); };
-  const tagEnd = (s, from) => { let quote = ''; for (let p = from; p < s.length; p++) { const c = s[p]; if (quote) { if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '>') return p; } return -1; };
+  // events is populated only by the pairing loop; when it stayed empty
+  // the render loop must not pay a Map lookup per character.
+  const hasEvents = events.size > 0;
   let out = '';
   // Literal text accumulates in `lit` and is escaped once per run instead
   // of one escapeHtml() call per character. Every branch that emits markup
@@ -233,7 +240,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   let noAutoUntil = -1;
   const flush = () => { if (lit) { out += escapeHtml(lit); lit = ''; } };
   for (let i = 0; i < source.length;) {
-    if (events.has(i)) { flush(); out += events.get(i).join(''); }
+    if (hasEvents && events.has(i)) { flush(); out += events.get(i).join(''); }
     if (source[i] === '*' || source[i] === '_') { if (consumed.has(i)) { i++; } else { lit += source[i]; i++; } continue; }
     const c = source[i];
     // GFM recognizes URL and email forms in ordinary text. Keep the scan
@@ -488,9 +495,15 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
     lit += c; i++;
   }
   flush();
-  if (events.has(source.length)) out += events.get(source.length).join('');
+  if (hasEvents && events.has(source.length)) out += events.get(source.length).join('');
   return out;
 }
+
+// Paragraph-interrupt test, hoisted: the same pattern was built with
+// `new RegExp` once per paragraph. Two module-level variants cover the
+// nested (any ordered marker) and top-level (only `1.`) cases.
+const paragraphInterruptNested = /^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:[-+*]|\d{1,9}[.)])[ \t])/;
+const paragraphInterruptPlain = /^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:[-+*]|1[.)])[ \t])/;
 
 // A line opens a fenced code block only when it is a genuine fence: for
 // backtick fences the info string must not contain a backtick, so a line
@@ -520,9 +533,10 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
   // untouched; a nested quote/list item is only re-parsed when its text
   // holds a `[label]:` line, the necessary condition for any definition.
   const IL = defsOnly ? () => '' : inline;
-  const hasDefLine = text => /\[[^\n]*\]:/.test(text);
+  const hasDefLine = text => text.includes(']:') && /\[[^\n]*\]:/.test(text);
   let i = 0;
-  const blank = s => /^[ ]*$/.test(s);
+  const blank = s => { for (let k = 0; k < s.length; k++) if (s[k] !== ' ') return false; return true; };
+  const leadSpaces = s => { let n = 0; while (s[n] === ' ') n++; return n; };
   const realBlank = n => blank(blockLines[n] || '') && !(n === blockLines.length - 1 && src.endsWith('\n'));
   const identifyHtmlBlock = line => {
     const s = line.replace(/^ {0,3}/, '');
@@ -594,7 +608,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       const code = [];
       while (i < blockLines.length) {
         if (/^(?: {4,}|\t)/.test(blockLines[i])) {
-          const lead = blockLines[i].match(/^ */)[0].length;
+          const lead = leadSpaces(blockLines[i]);
           const original = rawLines[i];
           code.push(original.startsWith('\t') ? original.slice(1) : original.startsWith('    ') ? original.slice(4) : blockLines[i].slice(4)); i++;
         } else if (blank(blockLines[i])) {
@@ -686,7 +700,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     }
     if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/)) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) {
       const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
-      const marker = m[1], markerIndent = blockLines[i].match(/^ */)[0].length;
+      const marker = m[1], markerIndent = leadSpaces(blockLines[i]);
       const markerPad = blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0] || '';
       let markerPadding=0, markerCol=markerIndent+marker.length; for(const ch of markerPad){const n=ch==='\t'?4-markerCol%4:1;markerPadding+=n;markerCol+=n;}
       if(!markerPadding) markerPadding=1;
@@ -705,7 +719,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
         const itemMatch = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/);
         if (!itemMatch || (ordered ? itemMatch[1].slice(-1) !== marker.slice(-1) : itemMatch[1] !== marker)) break;
-        const itemIndent = blockLines[i].match(/^ */)[0].length;
+        const itemIndent = leadSpaces(blockLines[i]);
         const padText=blockLines[i].slice(itemIndent+itemMatch[1].length).match(/^[ \t]+/)?.[0]||'';
         let padding=0,padCol=itemIndent+itemMatch[1].length;for(const ch of padText){const n=ch==='\t'?4-padCol%4:1;padding+=n;padCol+=n;}if(!padding)padding=1;
         const width = itemMatch[1].length + (padding > 4 ? 1 : padding);
@@ -727,15 +741,15 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             if (itemFence.closeRe.test(line)) itemFence = null;
           } else {
             const open = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-            if (open && !(open[1][0] === '`' && open[2].includes('`'))) { const fc = open[1][0] === '`' ? '`' : '~'; itemFence = { char: open[1], indent: line.match(/^ */)[0].length, info: open[2].trim().split(/[ \\t]/)[0], hasBody: false, closeRe: new RegExp('^ {0,3}' + fc + '{' + open[1].length + ',}[ \\t]*$'), closeReIndent: new RegExp('^ {0,' + (indent + 3) + '}' + fc + '{' + open[1].length + ',}[ \\t]*$') }; }
+            if (open && !(open[1][0] === '`' && open[2].includes('`'))) { const fc = open[1][0] === '`' ? '`' : '~'; itemFence = { char: open[1], indent: leadSpaces(line), info: open[2].trim().split(/[ \\t]/)[0], hasBody: false, closeRe: new RegExp('^ {0,3}' + fc + '{' + open[1].length + ',}[ \\t]*$'), closeReIndent: new RegExp('^ {0,' + (indent + 3) + '}' + fc + '{' + open[1].length + ',}[ \\t]*$') }; }
           }
         };
         trackFence(body[0]);
         while (i < blockLines.length) {
           const next = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-          if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && blockLines[i].match(/^ */)[0].length <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
+          if (next && /^\d/.test(next[1]) === ordered && (!ordered ? next[1] === marker : next[1].slice(-1) === marker.slice(-1)) && leadSpaces(blockLines[i]) <= itemIndent && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) break;
           if (itemFence) {
-            const lead = blockLines[i].match(/^ */)[0].length;
+            const lead = leadSpaces(blockLines[i]);
             const validClose = itemFence.closeReIndent.test(blockLines[i]);
             if (validClose && lead >= indent) { body.push(itemContent(blockLines[i], indent)); itemFence = null; i++; continue; }
             if (validClose) {
@@ -764,18 +778,18 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
             const followingFence = blockLines[k].match(/^ *(?:`{3,}|~{3,})/);
             // A fence starts a new block in this item only at its content
             // indentation. A shallower fence closes the list before parsing.
-            if (followingFence && blockLines[k].match(/^ */)[0].length < indent) break;
+            if (followingFence && leadSpaces(blockLines[k]) < indent) break;
             // A blank line followed by a different list type (different
             // bullet or ordered-ness) at this list's level ends the list;
             // it is a new list, not a loose continuation of this one.
             const km = blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-            if (km && blockLines[k].match(/^ */)[0].length <= itemIndent) { const kOrd = /^\d/.test(km[1]); const sameList = ordered ? (kOrd && km[1].slice(-1) === marker.slice(-1)) : (!kOrd && km[1] === marker); if (!sameList) break; }
-            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && blockLines[k].match(/^ */)[0].length <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; const kLead = blockLines[k].match(/^ */)[0].length; const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); const km2 = blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/); const kOrd2 = /^\d/.test(km2[1]); const diffType = ordered ? (!kOrd2 || km2[1].slice(-1) !== marker.slice(-1)) : (kOrd2 || km2[1] !== marker); if (!(kLead >= indent && nestedAlready) && !(diffType && kLead < indent)) hasLooseItems = true; continue; }
-            if (blockLines[k].match(/^ {0,3}>/) && blockLines[k].match(/^ */)[0].length >= indent) { body.push(''); allLazyLead0 = true; i++; hasLooseItems = true; continue; }
-            if (blockLines[k].match(/^ */)[0].length >= indent) { const nextLead = blockLines[k].match(/^ */)[0].length; const nestedMarker = nextLead >= indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); allLazyLead0 = true; i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
+            if (km && leadSpaces(blockLines[k]) <= itemIndent) { const kOrd = /^\d/.test(km[1]); const sameList = ordered ? (kOrd && km[1].slice(-1) === marker.slice(-1)) : (!kOrd && km[1] === marker); if (!sameList) break; }
+            if (blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/) && leadSpaces(blockLines[k]) <= itemIndent + 3) { body.push(''); allLazyLead0 = true; i++; const kLead = leadSpaces(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); const km2 = blockLines[k].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+|$)/); const kOrd2 = /^\d/.test(km2[1]); const diffType = ordered ? (!kOrd2 || km2[1].slice(-1) !== marker.slice(-1)) : (kOrd2 || km2[1] !== marker); if (!(kLead >= indent && nestedAlready) && !(diffType && kLead < indent)) hasLooseItems = true; continue; }
+            if (blockLines[k].match(/^ {0,3}>/) && leadSpaces(blockLines[k]) >= indent) { body.push(''); allLazyLead0 = true; i++; hasLooseItems = true; continue; }
+            if (leadSpaces(blockLines[k]) >= indent) { const nextLead = leadSpaces(blockLines[k]); const nestedMarker = nextLead >= indent && /^ +(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[k]); const nestedAlready = body.slice(1).some(line => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(line)); body.push(''); allLazyLead0 = true; i++; if (nestedMarker ? !nestedAlready && body[0]?.trim() : (!nestedAlready || nextLead <= indent)) hasLooseItems = true; continue; }
             break;
           }
-          const lead = blockLines[i].match(/^ */)[0].length;
+          const lead = leadSpaces(blockLines[i]);
           if (emptyMarker && body.length === 1 && !body[0].trim() && lead > itemIndent && lead < indent) { body.push(blockLines[i].slice(lead)); trackFence(body[body.length - 1]); }
           else if (lead === 4 && itemIndent === 3 && /^ {4}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(blockLines[i])) body.push('\\' + blockLines[i].slice(lead));
           else if (lead >= indent) { const pushed = itemContent(blockLines[i], indent); body.push(pushed); if (/^ /.test(pushed)) allLazyLead0 = false; afterShieldedSetext = false; trackFence(body[body.length - 1]); }
@@ -848,8 +862,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
     }
     if (i + 1 < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[i + 1])) { const d = blockLines[i + 1].trim()[0] === '=' ? 1 : 2; push(`<h${d}>${IL(blockLines[i].trim(), linkDefinitions)}</h${d}>\n`, 'heading'); i += 2; continue; }
     let j = i + 1;
-    const paragraphListMarker = nestedContext ? '(?:[-+*]|\\d{1,9}[.)])' : '(?:[-+*]|1[.)])';
-    const paragraphInterrupt = new RegExp('^ {0,3}(?:#{1,6}(?:\\s|$)|>|' + paragraphListMarker + '[ \\t])');
+    const paragraphInterrupt = nestedContext ? paragraphInterruptNested : paragraphInterruptPlain;
     while (j < blockLines.length && !blank(blockLines[j]) && !/^ {0,3}(?:=+|-+)[ \t]*$/.test(blockLines[j]) && !(htmlBlockOf(blockLines[j])?.type <= 6) && !paragraphInterrupt.test(blockLines[j]) && !isFenceStart(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
     if (j < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[j])) { const d=blockLines[j].trim()[0]==='='?1:2; push(`<h${d}>${IL(blockLines.slice(i,j).join('\n').trim(),linkDefinitions)}</h${d}>\n`, 'heading'); i=j+1; continue; }
     let paragraph = blockLines.slice(i, j).join('\n');
