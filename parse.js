@@ -142,6 +142,13 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
         const leftEdge = opener.start + opener.len;
         const rightEdge = closer.start;
         let attachedInnerClose = false;
+        // The mod-3 check must use the amounts that will actually be
+        // consumed in this pair (1 for <em>, 2 for <strong>), not the full
+        // run lengths: a trailing extra delimiter (e.g. the second * in
+        // `markdown**`) must not count toward the three-alignment, and the
+        // inner pair's amount comes from its tag, not its run length.
+        const remainingForPair = closer.len - closer.usedClose - closer.usedOpen;
+        const pairAmount = available >= 2 && remainingForPair >= 2 ? 2 : 1;
         if (closer.ch === '*') {
           for (const [at, tags] of events) {
             if (at <= leftEdge || at >= rightEdge || !word(source[at] || '')) continue;
@@ -151,10 +158,10 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
             const openingAt = [...events].find(([pos, values]) => pos > leftEdge && pos < at && values.includes(openingTag))?.[0];
             if (openingAt === undefined || !/\s/.test(source[openingAt - 1] || '')) continue;
             const innerCloser = marks.find(m => m.start < at && at <= m.start + m.len);
-            const innerLen = innerCloser ? innerCloser.len : 0;
+            const innerLen = closing === '</em>' ? 1 : 2;
             const blockedByThrees = (a, b) => (a + b) % 3 === 0 && !(a % 3 === 0 && b % 3 === 0);
             const hasDeadIntervener = innerCloser && innerLen === 1 && marks.some(m => m.start > innerCloser.start + innerCloser.len && m.start < closer.start && !m.open);
-            if (!hasDeadIntervener && (blockedByThrees(innerLen, closer.len) || blockedByThrees(innerLen, opener.len))) { attachedInnerClose = true; break; }
+            if (!hasDeadIntervener && (blockedByThrees(innerLen, pairAmount) || blockedByThrees(innerLen, opener.len))) { attachedInnerClose = true; break; }
           }
         }
         if (attachedInnerClose) continue;
