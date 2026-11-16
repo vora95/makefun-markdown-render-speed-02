@@ -469,7 +469,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       // shield from an outer quote still counts as a setext line here.
       let prevLazy = false;
       let lastLazySetext = false;
-      while(i<blockLines.length && !quoteFence && !blank(blockLines[i]) && q.length && q.at(-1).trim() && (!interrupt(q.at(-1)) || lastLazySetext || /^ {0,3}\d{1,9}[.)][ \t]+>/.test(q.at(-1))) && !/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(q.at(-1))) {
+      while(i<blockLines.length && !quoteFence && !blank(blockLines[i]) && q.length && (quoteLine(blockLines[i]) || (q.at(-1).trim() && (!interrupt(q.at(-1)) || lastLazySetext || /^ {0,3}\d{1,9}[.)][ \t]+>/.test(q.at(-1))) && !/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(q.at(-1))))) {
         const nextQuote=quoteLine(blockLines[i]);
         if(nextQuote){q.push(nextQuote[1]);i++;prevLazy=false;lastLazySetext=false;continue;}
         const rawLazy = blockLines[i];
