@@ -10,7 +10,9 @@ paths default to `/input` and `/output` and can be changed for local use with
 `MAKEFUN_INPUT_DIR` and `MAKEFUN_OUTPUT_DIR`.
 
 The parser has independent scanners for block structure, lists, quotes, fences,
-and inline tokens. Table bodies preserve blank cells and accept body rows that
+and inline tokens. Reference definitions are collected from parsed paragraph
+blocks before rendering, so definitions inside code and HTML blocks stay literal
+while forward references continue to resolve. Table bodies preserve blank cells and accept body rows that
 omit pipe separators. HTML block endings preserve whitespace-only following
 lines after self-terminating constructs, while tag blocks trim those separators.
 Bare and angle autolinks percent-encode backslashes in their destinations. The

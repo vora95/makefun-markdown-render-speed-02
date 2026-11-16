@@ -14,6 +14,10 @@ The independently written parser and driver modifications in this repository,
 including block, list, fence, link, and inline handling, are Copyright (c) 2026
 vora95 and contributors and are licensed under these same terms.
 
+The block-aware reference-definition collection and its two-pass rendering
+integration are additional independent modifications, Copyright (c) 2026
+vora95 and contributors.
+
 This project includes independently written modifications to an implementation
 informed by marked. See NOTICE for the upstream project's attribution and
 license information.

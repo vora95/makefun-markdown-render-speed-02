@@ -21,6 +21,9 @@ tag scanning and balanced-parenthesis handling for bare GFM URLs.
 Further independent work in this fork covers list continuation and tightness,
 CommonMark reference links, delimiter/link interactions, extended GFM
 autolinks, and raw HTML attribute validation.
+Reference definitions are collected during block parsing in a separate
+collection pass so code and HTML blocks do not contribute definitions; this
+block-aware behavior is independently authored in this fork.
 The current emphasis pass independently collects delimiter runs, applies
 flanking and run-of-three checks, and emits paired tags while preserving unused
 markers. This implementation remains a modified fork and does not include the

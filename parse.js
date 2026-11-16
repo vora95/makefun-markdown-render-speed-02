@@ -274,7 +274,7 @@ function inline(source, linkDefinitions = Object.create(null), disableAutolinks 
   return out;
 }
 
-function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false) {
+function renderBlockTree(markdown, linkDefinitions = Object.create(null), nestedContext = false, collectDefinitions = false) {
   const src = markdown.replace(/\r\n?/g, '\n');
   const rawLines = src.split('\n');
   const blockLines = rawLines.map(line => { let col = 0, n = 0; while (n < line.length && (line[n] === ' ' || line[n] === '\t')) { if (line[n] === '\t') { const step = 4 - col % 4; line = line.slice(0, n) + ' '.repeat(step) + line.slice(n + 1); col += step; n += step; } else { col++; n++; } } return line; });
@@ -381,7 +381,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
         if (/^ {0,3}=+[ \t]*$/.test(lazy)) lazy = '\u0002' + lazy.trim();
         q.push(lazy);
       }
-      out.push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions, true).replace(/\u0001/g,' ').replace(/\u0002/g,'    ')}</blockquote>\n`); continue;
+      out.push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\u0001/g,' ').replace(/\u0002/g,'    ')}</blockquote>\n`); continue;
     }
     if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/)) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) {
       const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
@@ -467,7 +467,7 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       let htmlItems = listItems.map(linesInItem => {
         const task = linesInItem[0]?.match(/^\[([ xX])\][ \t]+(.*)$/);
         if (task) linesInItem[0] = task[2];
-        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, true).replace(/\n$/, '');
+        const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions, true, collectDefinitions).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
         if (!hasLooseItems && /^(?:<blockquote>|<ul>|<ol>)/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (!hasLooseItems && /^<h[1-6]>[\s\S]*<\/h[1-6]>$/.test(rendered)) return `<li>${checkbox}${rendered}\n</li>\n`;
@@ -484,36 +484,50 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null), nested
       if (!hasLooseItems) htmlItems = htmlItems.replace(/<li>\n(?=<(?:blockquote|ul|ol)>)/g, '<li>');
       out.push(`<${tag}${ordered && startNumber !== 1 ? ` start="${startNumber}"` : ''}>\n${htmlItems}</${tag}>\n`); continue;
     }
+    const definitionStart = blockLines[i].match(/^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(.*)$/);
+    if (definitionStart && definitionStart[1].trim() && !/(^|[^\\])\[/.test(definitionStart[1])) {
+      const rawLabel = definitionStart[1]; let rest = definitionStart[2], consumedLines = 1;
+      if (!rest.trim() && i + 1 < blockLines.length && /^\s*\S/.test(blockLines[i + 1])) { rest = blockLines[i + 1].trim(); consumedLines++; }
+      const destination = rest.match(/^(?:<([^>\n]*)>|(\S+))(?:[ \t]+(?:"([^"\n]*)"|'([^'\n]*)'|\(([^)\n]*)\)))?[ \t]*$/);
+      if (destination) {
+        let title = destination[3] ?? destination[4] ?? destination[5] ?? '';
+        if (!title && i + consumedLines < blockLines.length) {
+          const titleLine = blockLines[i + consumedLines].match(/^\s*(?:"([^"\n]*)"|'([^'\n]*)'|\(([^)\n]*)\))[ \t]*$/);
+          if (titleLine) { title = titleLine[1] ?? titleLine[2] ?? titleLine[3]; consumedLines++; }
+        }
+        const label = rawLabel.replace(/\\([\\()[\]])/g, '$1');
+        const key = label.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
+        if (!linkDefinitions[key]) linkDefinitions[key] = { href: cleanDestination(destination[1] ?? destination[2]), title: title.replace(/\\([\p{P}\p{S}])/gu, '$1') };
+        i += consumedLines; continue;
+      }
+    }
     if (i + 1 < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[i + 1])) { const d = blockLines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(blockLines[i].trim(), linkDefinitions)}</h${d}>\n`); i += 2; continue; }
     let j = i + 1;
     const paragraphListMarker = nestedContext ? '(?:[-+*]|\\d{1,9}[.)])' : '(?:[-+*]|1[.)])';
     while (j < blockLines.length && !blank(blockLines[j]) && !/^ {0,3}(?:=+|-+)[ \t]*$/.test(blockLines[j]) && !(identifyHtmlBlock(blockLines[j]) && identifyHtmlBlock(blockLines[j]).type <= 6) && !new RegExp('^ {0,3}(?:#{1,6}(?:\\s|$)|>|```|~~~|' + paragraphListMarker + '[ \\t])').test(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
     if (j < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[j])) { const d=blockLines[j].trim()[0]==='='?1:2; out.push(`<h${d}>${inline(blockLines.slice(i,j).join('\n').trim(),linkDefinitions)}</h${d}>\n`); i=j+1; continue; }
-    out.push(`<p>${inline(blockLines.slice(i, j).join('\n'), linkDefinitions)}</p>\n`); i = j;
+    let paragraph = blockLines.slice(i, j).join('\n');
+    const definitionPattern = /^ {0,3}\[((?:\\.|[^\]])+)\]:[ \t]*(?:<([^>\n]*)>|(?!<)(\S+))(?:(?:[ \t]+|[ \t]*\n[ \t]*)(?:"((?:(?!\n[ \t]*\n)[\s\S])*?)"|'((?:(?!\n[ \t]*\n)[\s\S])*?)'|\((.*)\)))?[ \t]*(?:\n|$)/;
+    while (paragraph) {
+      const definition = definitionPattern.exec(paragraph);
+      if (!definition || definition.index !== 0) break;
+      const [, rawLabel, angled, plain, dq, sq, paren] = definition;
+      if (!rawLabel.trim() || /(^|[^\\])\[/.test(rawLabel)) break;
+      const label = rawLabel.replace(/\\([\\()[\]])/g, '$1');
+      const key = label.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
+      if (!linkDefinitions[key]) linkDefinitions[key] = { href: cleanDestination(angled ?? plain), title: (dq ?? sq ?? paren ?? '').replace(/\\([\p{P}\p{S}])/gu, '$1') };
+      paragraph = paragraph.slice(definition[0].length).replace(/^\n/, '');
+    }
+    if (paragraph) out.push(`<p>${inline(paragraph, linkDefinitions)}</p>\n`);
+    i = j;
   }
   return out.join('').replace(/<li>\n(?=<(?:ol|ul)(?:\s|>)|<blockquote>)/g, '<li>');
 }
 
 /** Render a Markdown string into HTML. */
 export function parse(markdown) {
-  let source = String(markdown);
+  const source = String(markdown);
   const linkDefinitions = Object.create(null);
-  source = source.replace(/^ {0,3}(?:> ?)*\[((?:\\.|[^\]])+)\]:[ \t]*(?:\n[ \t]*)?(?:<([^>\n]*)>|(?!<)(\S+))(?:(?:[ \t]+|[ \t]*\n[ \t]*)(?:"((?:(?!\n[ \t]*\n)[\s\S])*?)"|'((?:(?!\n[ \t]*\n)[\s\S])*?)'|\((.*)\)))?[ \t]*$/gm, (_m, rawLabel, angled, plain, dq, sq, paren, offset) => {
-    const before = source.slice(0, offset), linePrefix = before.slice(before.lastIndexOf('\n') + 1);
-    const precedingLine = before.slice(0, Math.max(0, before.lastIndexOf('\n'))).split('\n').at(-1) || '';
-    let fence = null;
-    for (const line of before.split('\n')) {
-      const mark = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-      if (!fence && mark && !(mark[1][0] === '`' && mark[2].includes('`'))) fence = mark[1];
-      else if (fence && new RegExp('^ {0,3}' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \t]*$').test(line)) fence = null;
-    }
-    const definitionRun = /^ {0,3}\[.*\]:/m.test(before);
-    if (fence || precedingLine.trim() && !/^ {0,3}>/.test(linePrefix) && !/^ {0,3}#/.test(precedingLine) && !/^ {0,3}\[.*\]:/.test(precedingLine) && !definitionRun) return _m;
-    if (!rawLabel.trim() || /(^|[^\\])\[/.test(rawLabel)) return _m;
-    const label = rawLabel.replace(/\\([\\()[\]])/g, '$1');
-    const key = label.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ß/g, 'ss');
-    if (!linkDefinitions[key]) linkDefinitions[key] = { href: cleanDestination(angled ?? plain), title: (dq ?? sq ?? paren ?? '').replace(/\\([\p{P}\p{S}])/gu, '$1') };
-    return _m.match(/^ {0,3}(?:> ?)+/)?.[0] || '';
-  });
+  renderBlockTree(source, linkDefinitions, false, true);
   return renderBlockTree(source, linkDefinitions);
 }
