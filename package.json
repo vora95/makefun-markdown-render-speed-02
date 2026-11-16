@@ -3,7 +3,7 @@
   "name": "markdown-render-speed-02-entry",
   "version": "1.2.0",
   "private": true,
-  "description": "Independent marked-compatible renderer with delimiter, fence, and list parsing",
+  "description": "Independent marked-compatible renderer with a delimiter-stack emphasis pass",
   "license": "MIT",
   "exports": "./parse.js"
 }

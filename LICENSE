@@ -1,5 +1,9 @@
 SPDX-License-Identifier: MIT
 
+The independent delimiter-stack emphasis implementation and its integration
+were written for this modified fork and remain covered by the copyright notice
+below.
+
 The source includes independently authored parser refinements for multiline
 HTML tags and balanced punctuation in bare URL recognition.
 

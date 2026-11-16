@@ -13,13 +13,17 @@ This implementation is an independently structured and modified fork informed
 by marked 18.1.3. Its per-call parser uses run-aware code spans and an independent
 block scanner for headings, fenced code, lists, block quotes, and HTML, alongside
 inline handling for formatting, links, images, and supported GFM extensions.
+Emphasis and strong emphasis are paired from per-call delimiter runs with
+left/right flanking checks, underscore word boundaries, and a rule-of-three
+guard. Code spans, escapes, tag contents, and inline link syntax are shielded
+while collecting delimiters; unpaired marker characters remain literal.
 Task checkboxes are inserted into the first paragraph of loose task items. Fenced
 blocks and list-contained code are collected with explicit delimiter state.
 The implementation includes quote-aware, multiline inline tag recognition and
 balanced-parenthesis handling for bare GFM URLs. Exact compatibility is checked against the supplied practice corpus. Upstream
 credit is in [NOTICE](NOTICE); the MIT terms are in [LICENSE](LICENSE).
 
-Inline delimiter handling, block recognition, link destination parsing, and
+Inline delimiter stack handling, block recognition, link destination parsing, and
 batch input/output plumbing have been independently adapted for this entry.
 Parsing state is local to each call, so rendering one document does not affect
 the next. No document output or cross-call result cache is stored by the renderer.

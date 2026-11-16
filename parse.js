@@ -5,6 +5,51 @@ const cleanDestination = s => s.replace(/\\([\p{P}\p{S}])/gu, '$1').replace(/\\/
 const angleDestination = s => s.replace(/\\/g, '%5C');
 
 function inline(source, linkDefinitions = Object.create(null)) {
+  // Resolve emphasis runs as a delimiter stack before rendering the other
+  // inline tokens. Each run keeps its unused marker characters literal.
+  const marks = [];
+  const word = c => !!c && /[\p{L}\p{N}]/u.test(c);
+  const punct = c => !!c && /[\p{P}\p{S}]/u.test(c);
+  for (let p = 0; p < source.length;) {
+    const ch = source[p];
+    if (ch === '\\' && p+1<source.length && /[\p{P}\p{S}]/u.test(source[p+1])) { p+=2; continue; }
+    if (ch === '`') { let n = 1; while (source[p + n] === '`') n++; let e = source.indexOf('`'.repeat(n), p + n); if (e >= 0) { p = e + n; continue; } p += n; continue; }
+    if (ch === '<') { let q=p+1, quote=''; for(;q<source.length;q++){const x=source[q];if(quote){if(x===quote)quote='';}else if(x==='"'||x==="'")quote=x;else if(x==='>')break;} if(q<source.length){p=q+1;continue;} }
+    if (ch === '[' || ch==='!' && source[p+1]==='[') { let q=p+(ch==='!'?2:1), depth=0; for(;q<source.length;q++){if(source[q]==='\\'){q++;continue;}if(source[q]==='[')depth++;else if(source[q]===']'){if(!depth)break;depth--;}} if(q<source.length && source[q+1]==='('){let z=q+2,par=0;for(;z<source.length;z++){if(source[z]==='\\'){z++;continue;}if(source[z]==='(')par++;else if(source[z]===')'){if(!par)break;par--;}}if(z<source.length){p=z+1;continue;}} }
+    if (ch !== '*' && ch !== '_') { p++; continue; }
+    let end = p + 1; while (source[end] === ch) end++;
+    const before = source[p - 1] || '', after = source[end] || '';
+    const left = !!after && !/\s/.test(after) && (!punct(after) || !before || /\s/.test(before) || punct(before));
+    const right = !!before && !/\s/.test(before) && (!punct(before) || !after || /\s/.test(after) || punct(after));
+    marks.push({ ch, start:p, len:end-p, open:left && (ch !== '_' || !word(before) || !word(after)), close:right && (ch !== '_' || !word(before) || !word(after)), usedOpen:0, usedClose:0 }); p=end;
+  }
+  const events = new Map();
+  const consumed = new Set();
+  const addEvent = (at, value) => { let a=events.get(at); if (!a) events.set(at,a=[]); a.push(value); };
+  for (let ci=0; ci<marks.length; ci++) {
+    const closer=marks[ci]; if (!closer.close) continue;
+    while (closer.len-closer.usedClose > 0) {
+      let found=-1, amount=0;
+      for (let oi=ci-1; oi>=0; oi--) {
+        const opener=marks[oi]; const available=opener.len-opener.usedOpen-opener.usedClose;
+        if (opener.ch!==closer.ch || !opener.open || available<=0) continue;
+        const remaining=closer.len-closer.usedClose-closer.usedOpen;
+        if (opener.close && available===2 && remaining===1 && !closer.open) continue;
+        const both=closer.open;
+        if (both && (available+remaining)%3===0 && !(available%3===0 && remaining%3===0)) continue;
+        amount=available>=2 && remaining>=2 ? 2 : 1; found=oi; break;
+      }
+      if (found<0) break;
+      const opener=marks[found], openAt=opener.start+opener.len-opener.usedClose-opener.usedOpen-amount, closeAt=closer.start+closer.usedClose;
+      const tag=amount===2?'strong':'em'; addEvent(openAt,`<${tag}>`); addEvent(closeAt+amount,`</${tag}>`);
+      for(let q=openAt;q<openAt+amount;q++) consumed.add(q);
+      for(let q=closeAt;q<closeAt+amount;q++) consumed.add(q);
+      opener.usedOpen+=amount; closer.usedClose+=amount;
+      // An unmatched opener crossed by a completed pair can no longer
+      // reach across that pair to create malformed crossing tags.
+      for(let k=found+1;k<ci;k++) if(marks[k].open && marks[k].len>marks[k].usedOpen) marks[k].open=false;
+    }
+  }
   // Text without inline delimiters can bypass the token scanner entirely.
   if (!/[*_`\[\]\\!~<&]| {2,}\n|(?:https?:\/\/|ftp:\/\/|www\.)|[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+\.[A-Za-z]/i.test(source)) return escapeHtml(source);
   const isPunctuation = c => !!c && /[\p{P}\p{S}]/u.test(c);
@@ -20,98 +65,11 @@ function inline(source, linkDefinitions = Object.create(null)) {
     }
     return -1;
   };
-  const findStarPair = (s, i) => {
-    let n = 1; while (s[i + n] === '*') n++;
-    const b = s[i - 1] || '', a = s[i + n] || '';
-    const canOpen = !!a && !isWhitespace(a) && (!isPunctuation(a) || !b || isWhitespace(b) || isPunctuation(b));
-    if (!canOpen) return null;
-    for (let j = i + n; j < s.length;) {
-      // A code span shields its contents from delimiter processing.
-      if (s[j] === '`') {
-        let ticks = 1; while (s[j + ticks] === '`') ticks++;
-        const e = matchingTickEnd(s, j + ticks, ticks);
-        if (e >= 0) { j = e + ticks; continue; }
-        j += ticks; continue;
-      }
-      // Skip link destinations and their labels as a unit during pairing.
-      if (s[j] === '[' || s[j] === '!' && s[j + 1] === '[') {
-        const start = j + (s[j] === '!' ? 2 : 1); let e = start, depth = 0;
-        for (; e < s.length; e++) { if (s[e] === '[') depth++; else if (s[e] === ']') { if (!depth) break; depth--; } }
-        if (e < s.length && s[e + 1] === '(') {
-          let z = e + 2, par = 0;
-          for (; z < s.length; z++) { if (s[z] === '(') par++; else if (s[z] === ')') { if (!par) break; par--; } }
-          if (z < s.length) { j = z + 1; continue; }
-        }
-      }
-      if (s[j] !== '*') { j++; continue; }
-      let m = 1; while (s[j + m] === '*') m++;
-      const x = s[j - 1] || '', y = s[j + m] || '';
-      const canClose = !!x && !isWhitespace(x) && (!isPunctuation(x) || !y || isWhitespace(y) || isPunctuation(y));
-      const canCloseSide = !!y && !isWhitespace(y) && (!isPunctuation(y) || !x || isWhitespace(x) || isPunctuation(x));
-      const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && canCloseSide;
-      // A longer run that can also open belongs to a nested delimiter pair.
-      if (canClose && canCloseSide && m > n) { j += m; continue; }
-      if (canClose && !ruleOf3Blocks) {
-        // If this close completes a newer opener inside the current span,
-        // leave it for that opener and keep searching for the outer close.
-        let nested = -1;
-        for (let k = i + n; k < j; k++) if (s[k] === '*' && s[k - 1] !== '*') {
-          const q = findStarPair(s, k);
-          if (q && q.end === j) { nested = k; break; }
-        }
-        if (nested >= 0) { j += m; continue; }
-        return { end: j, opener: n, closer: m };
-      }
-      j += m;
-    }
-    return null;
-  };
-  const findUnderscorePair = (s, i) => {
-    let n = 1; while (s[i + n] === '_') n++;
-    const b = s[i - 1] || '', a = s[i + n] || '';
-    const left = !!a && !isWhitespace(a) && (!isPunctuation(a) || !b || isWhitespace(b) || isPunctuation(b));
-    const right = !!b && !isWhitespace(b) && (!isPunctuation(b) || !a || isWhitespace(a) || isPunctuation(a));
-    const canOpen = left && (!right || isPunctuation(b));
-    if (!canOpen) return null;
-    for (let j = i + n; j < s.length;) {
-      if (s[j] === '`') {
-        let ticks = 1; while (s[j + ticks] === '`') ticks++;
-        const e = matchingTickEnd(s, j + ticks, ticks);
-        if (e >= 0) { j = e + ticks; continue; }
-        j += ticks; continue;
-      }
-      if (s[j] === '[' || s[j] === '!' && s[j + 1] === '[') {
-        const start = j + (s[j] === '!' ? 2 : 1); let e = start, depth = 0;
-        for (; e < s.length; e++) { if (s[e] === '[') depth++; else if (s[e] === ']') { if (!depth) break; depth--; } }
-        if (e < s.length && s[e + 1] === '(') {
-          let z = e + 2, par = 0;
-          for (; z < s.length; z++) { if (s[z] === '(') par++; else if (s[z] === ')') { if (!par) break; par--; } }
-          if (z < s.length) { j = z + 1; continue; }
-        }
-      }
-      if (s[j] !== '_') { j++; continue; }
-      let m = 1; while (s[j + m] === '_') m++;
-      const x = s[j - 1] || '', y = s[j + m] || '';
-      const closeLeft = !!x && !isWhitespace(x) && (!isPunctuation(x) || !y || isWhitespace(y) || isPunctuation(y));
-      const closeRight = !!y && !isWhitespace(y) && (!isPunctuation(y) || !x || isWhitespace(x) || isPunctuation(x));
-      const canClose = closeLeft && (!closeRight || isPunctuation(y));
-      const ruleOf3Blocks = ((n + m) % 3 === 0) && canOpen && closeRight;
-      if (canClose && closeLeft && m > n) { j += m; continue; }
-      if (canClose && !ruleOf3Blocks) {
-        let nested = -1;
-        for (let k = i + n; k < j; k++) if (s[k] === '_' && s[k - 1] !== '_') {
-          const q = findUnderscorePair(s, k);
-          if (q && q.end === j) { nested = k; break; }
-        }
-        if (nested >= 0) { j += m; continue; }
-        return { end: j, opener: n, closer: m };
-      }
-      j += m;
-    }
-    return null;
-  };
   let out = '';
   for (let i = 0; i < source.length;) {
+    if (events.has(i)) out += events.get(i).join('');
+    if ((source[i] === '*' || source[i] === '_') && !consumed.has(i)) { out += source[i]; i++; continue; }
+    if ((source[i] === '*' || source[i] === '_') && consumed.has(i)) { i++; continue; }
     const c = source[i];
     // GFM recognizes URL and email forms in ordinary text. Keep the scan
     // anchored at the current cursor so punctuation and adjacent markup stay
@@ -189,52 +147,6 @@ function inline(source, linkDefinitions = Object.create(null)) {
       if (source[i + 1] === '\n' && i + 2 < source.length) { out += '<br>'; i += 2; continue; }
       if (/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(source[i + 1])) { out += escapeHtml(source[i + 1]); i += 2; continue; }
     }
-    // Resolve the common odd closer in one pass: a single outer opener,
-    // a double inner opener, then a triple closer. The final marker closes
-    // the outer span while the first two close the inner one.
-    if (c === '_' || c === '*') {
-      if (source[i - 1] === c) { out += c; i++; continue; }
-      const mark = c;
-      const escapedMark = mark === '*' ? '\\*' : '_';
-      const closeRun = escapedMark.repeat(3);
-      if (mark === '_' && source.startsWith('__', i)) {
-        const odd = source.slice(i).match(/^__([^_\n]+)_([^_\n]+)_/);
-        if (odd) { out += `<em><em>${inline(odd[1], linkDefinitions)}</em>${inline(odd[2], linkDefinitions)}</em>`; i += odd[0].length; continue; }
-      }
-      let openerLength = 1; while (source[i + openerLength] === mark) openerLength++;
-      const before = source[i - 1] || '', after = source[i + openerLength] || '';
-      const specialCanOpen = !!after && !isWhitespace(after) && (!isPunctuation(after) || !before || isWhitespace(before) || isPunctuation(before));
-      if (mark === '*' && specialCanOpen) {
-        const outerStrong = source.slice(i).match(/^\*\*([^*\n]+?)\*([^*\n]+?)\*\*\*/);
-        if (outerStrong) {
-          out += `<strong>${inline(outerStrong[1], linkDefinitions)}<em>${inline(outerStrong[2], linkDefinitions)}</em></strong>`;
-          i += outerStrong[0].length; continue;
-        }
-      }
-      const nested = specialCanOpen && source.slice(i).match(new RegExp('^' + escapedMark + '([^' + mark + '\\n]+?)' + escapedMark.repeat(2) + '([^' + mark + '\\n]+?)' + closeRun));
-      if (nested) {
-        out += `<em>${inline(nested[1], linkDefinitions)}<strong>${inline(nested[2], linkDefinitions)}</strong></em>`;
-        i += nested[0].length; continue;
-      }
-    }
-    if (c === '*') {
-      const pair = findStarPair(source, i);
-      if (pair) {
-        const common = Math.min(pair.opener, pair.closer);
-        const n = common % 2 ? 1 : 2, tag = n === 2 ? 'strong' : 'em';
-        out += `<${tag}>${inline('*'.repeat(pair.opener - n) + source.slice(i + pair.opener, pair.end) + '*'.repeat(pair.closer - n), linkDefinitions)}</${tag}>`;
-        i = pair.end + pair.closer; continue;
-      }
-    }
-    if (c === '_') {
-      const pair = findUnderscorePair(source, i);
-      if (pair) {
-        const common = Math.min(pair.opener, pair.closer);
-        const n = common % 2 ? 1 : 2, tag = n === 2 ? 'strong' : 'em';
-        out += '_'.repeat(pair.opener - n) + `<${tag}>${inline(source.slice(i + pair.opener, pair.end), linkDefinitions)}</${tag}>` + '_'.repeat(pair.closer - n);
-        i = pair.end + pair.closer; continue;
-      }
-    }
     if (c === '~') {
       let n = 1; while (source[i + n] === '~') n++;
       if (n > 2) { out += '~'.repeat(n); i += n; continue; }
@@ -244,10 +156,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
         i = end + n; continue;
       }
     }
-    if (source.startsWith('**', i) && source[i + 2] && !isWhitespace(source[i + 2]) && !isPunctuation(source[i + 2])) {
-      const end = source.indexOf('**', i + 2);
-      if (end > i + 2 && !/\s/.test(source[i + 2]) && !/\s/.test(source[end - 1]) && (!source[i - 1] || /[\s\p{P}\p{S}]/u.test(source[i - 1]))) { out += `<strong>${inline(source.slice(i + 2, end), linkDefinitions)}</strong>`; i = end + 2; continue; }
-    }
+
     if (c === '<') { const e = tagEnd(source, i + 1); if (e >= 0) { const raw = source.slice(i, e + 1), inner = raw.slice(1, -1); const splitAt = inner.search(/\s/), head = splitAt < 0 ? inner : inner.slice(0, splitAt); if (splitAt >= 0 && /^(?:https?:\/\/|ftp:\/\/)[^<>]+$/i.test(head)) { out += `&lt;<a href="${escapeHtml(angleDestination(head))}">${escapeHtml(head)}</a>${escapeHtml(inner.slice(splitAt))}&gt;`; i = e + 1; continue; } if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ <>]+$/.test(inner)) { out += `<a href="${escapeHtml(angleDestination(inner).replace(/`/g, '%60'))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^(?:https?:\/\/|ftp:\/\/|www\.)[^ <>]+$/i.test(inner)) { const href = /^www\./i.test(inner) ? 'http://' + inner : inner; out += `<a href="${escapeHtml(angleDestination(href))}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^[^ <>@]+@[^ <>]+\.[A-Za-z]{2,}$/.test(inner)) { out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`; i = e + 1; continue; } if (/^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+(?:[^<>"']|"[^"]*"|'[^']*')*)?\s*\/?>$/s.test(raw) || /^<!--/.test(raw)) { out += raw; i = e + 1; continue; } } }
     if (c === '&') { const m = source.slice(i).match(/^&(?:#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6})|[A-Za-z][A-Za-z0-9]*);/); if (m) { const dec = m[0].match(/^&#(\d+);$/), hex = m[0].match(/^&#[xX]([\da-fA-F]+);$/); if (dec || hex) { const cp = Number.parseInt((dec || hex)[1], dec ? 10 : 16); out += escapeHtml(!cp || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff ? '\uFFFD' : String.fromCodePoint(cp)); } else out += m[0]; i += m[0].length; continue; } }
     if (c === '\n') {
@@ -258,6 +167,7 @@ function inline(source, linkDefinitions = Object.create(null)) {
     }
     out += escapeHtml(c); i++;
   }
+  if (events.has(source.length)) out += events.get(source.length).join('');
   return out;
 }
 
@@ -345,13 +255,32 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
       out.push(`<pre><code${lang ? ` class="language-${escapeAttribute(lang)}"` : ''}>${escapeHtml(body)}${body !== '' && !body.endsWith('\n') ? '\n' : ''}</code></pre>\n`); i = Math.min(j + 1, blockLines.length); continue;
     }
     if ((m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) {
-      const q = []; while (i < blockLines.length && (m = blockLines[i].match(/^ {0,3}> ?(.*)$/))) { q.push(m[1]); i++; }
-      out.push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions)}</blockquote>\n`); continue;
+      const q = []; while (i < blockLines.length && (m = blockLines[i].match(/^ {0,3}>(?: ?)(.*)$/))) {
+        let content=m[1];
+        if (content.includes('\t')) { let col=1,expanded=''; for(const ch of content){if(ch==='\t'){const n=4-col%4;expanded+=' '.repeat(n);col+=n;}else{expanded+=ch;col++;}} content=expanded.startsWith(' ')?expanded.slice(1):expanded; }
+        if (content === ' ' && q.some(line=>line.trim())) content='\u0001';
+        q.push(content); i++;
+      }
+      // An unmarked line continues a paragraph lazily when that paragraph
+      // began inside the quote and the line does not start a new block.
+      const interrupt = line => /^(?: {4,}|\t)|^ {0,3}(?:#{1,6}(?:\s|$)|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t]|(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})/.test(line);
+      while(i<blockLines.length && !blank(blockLines[i]) && q.length && q.at(-1).trim() && !interrupt(q.at(-1))) {
+        const nextQuote=blockLines[i].match(/^ {0,3}> ?(.*)$/);
+        if(nextQuote){q.push(nextQuote[1]);i++;continue;}
+        const lazyIndentedList=/^ {4,}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(blockLines[i]);
+        if(interrupt(blockLines[i]) && !lazyIndentedList) break;
+        let lazy=blockLines[i++].replace(/^ {1,4}/,'');
+        if(lazyIndentedList) lazy='\\'+lazy;
+        q.push(lazy);
+      }
+      out.push(`<blockquote>\n${renderBlockTree(q.join('\n'), linkDefinitions).replace(/\u0001/g,' ')}</blockquote>\n`); continue;
     }
     if ((m = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/)) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[i])) {
       const ordered = /^\d/.test(m[1]), tag = ordered ? 'ol' : 'ul';
       const marker = m[1], markerIndent = blockLines[i].match(/^ */)[0].length;
-      const markerPadding = blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0].length || 1;
+      const markerPad = blockLines[i].slice(markerIndent + marker.length).match(/^[ \t]+/)?.[0] || '';
+      let markerPadding=0, markerCol=markerIndent+marker.length; for(const ch of markerPad){const n=ch==='\t'?4-markerCol%4:1;markerPadding+=n;markerCol+=n;}
+      if(!markerPadding) markerPadding=1;
       const markerWidth = marker.length + (markerPadding > 4 ? 1 : markerPadding);
       const contentIndent = markerIndent + markerWidth;
       const startNumber = ordered ? Number.parseInt(marker, 10) : 1;
@@ -361,10 +290,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
         const itemMatch = blockLines[i].match(/^ {0,3}([-+*]|\d{1,9}[.)])(?:[ \t]+(.*)|[ \t]*)$/);
         if (!itemMatch || (ordered ? itemMatch[1].slice(-1) !== marker.slice(-1) : itemMatch[1] !== marker)) break;
         const itemIndent = blockLines[i].match(/^ */)[0].length;
-        const padding = blockLines[i].slice(itemIndent + itemMatch[1].length).match(/^[ \t]+/)?.[0].length || 1;
+        const padText=blockLines[i].slice(itemIndent+itemMatch[1].length).match(/^[ \t]+/)?.[0]||'';
+        let padding=0,padCol=itemIndent+itemMatch[1].length;for(const ch of padText){const n=ch==='\t'?4-padCol%4:1;padding+=n;padCol+=n;}if(!padding)padding=1;
         const width = itemMatch[1].length + (padding > 4 ? 1 : padding);
         const indent = itemIndent + width;
-        const body = [itemMatch[2] || '']; i++;
+        const body = [padding > 4 ? ' '.repeat(padding - 1) + (itemMatch[2] || '') : (itemMatch[2] || '')]; i++;
         let itemFence = null;
         const trackFence = line => {
           if (itemFence) {
@@ -405,9 +335,11 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
         const rendered = renderBlockTree(linesInItem.join('\n'), linkDefinitions).replace(/\n$/, '');
         const checkbox = task ? `<input ${task[1] === ' ' ? 'disabled=""' : 'checked="" disabled=""'} type="checkbox"> ` : '';
         if (!hasLooseItems && rendered === '<hr>') return `<li>${checkbox}<hr>\n</li>\n`;
+        if (!hasLooseItems && rendered.startsWith('<pre>')) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (!hasLooseItems && /^<p>[\s\S]*<\/p>$/.test(rendered)) return `<li>${checkbox}${rendered.slice(3, -4)}</li>\n`;
         if (!hasLooseItems && /^<\/?[A-Za-z]/.test(rendered) && !rendered.includes('\n')) return `<li>${checkbox}${rendered}</li>\n`;
         if (!hasLooseItems && rendered.startsWith('<p>')) { const close = rendered.indexOf('</p>'); if (close >= 0) return `<li>${checkbox}${rendered.slice(3, close)}${rendered.slice(close + 5)}\n</li>\n`; }
+        if (rendered.startsWith('<pre>')) return `<li>${checkbox}${rendered}\n</li>\n`;
         if (hasLooseItems && rendered.startsWith('<p>')) return `<li><p>${checkbox}${rendered.slice(3)}\n</li>\n`;
         return `<li>${checkbox}${rendered ? '\n' + rendered + '\n' : ''}</li>\n`;
       }).join('');
@@ -415,7 +347,8 @@ function renderBlockTree(markdown, linkDefinitions = Object.create(null)) {
     }
     if (i + 1 < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[i + 1])) { const d = blockLines[i + 1].trim()[0] === '=' ? 1 : 2; out.push(`<h${d}>${inline(blockLines[i].trim(), linkDefinitions)}</h${d}>\n`); i += 2; continue; }
     let j = i + 1;
-    while (j < blockLines.length && !blank(blockLines[j]) && !(identifyHtmlBlock(blockLines[j]) && identifyHtmlBlock(blockLines[j]).type <= 6) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
+    while (j < blockLines.length && !blank(blockLines[j]) && !/^ {0,3}(?:=+|-+)[ \t]*$/.test(blockLines[j]) && !(identifyHtmlBlock(blockLines[j]) && identifyHtmlBlock(blockLines[j]).type <= 6) && !/^ {0,3}(?:#{1,6}(?:\s|$)|>|```|~~~|(?:[-+*]|\d{1,9}[.)])[ \t])/.test(blockLines[j]) && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(blockLines[j])) j++;
+    if (j < blockLines.length && /^ {0,3}(=+|-+)[ \t]*$/.test(blockLines[j])) { const d=blockLines[j].trim()[0]==='='?1:2; out.push(`<h${d}>${inline(blockLines.slice(i,j).join('\n').trim(),linkDefinitions)}</h${d}>\n`); i=j+1; continue; }
     out.push(`<p>${inline(blockLines.slice(i, j).join('\n'), linkDefinitions)}</p>\n`); i = j;
   }
   return out.join('');

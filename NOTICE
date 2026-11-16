@@ -18,3 +18,7 @@ MIT attribution above are retained for the marked-derived work.
 
 Additional independently authored refinements include multiline quoted HTML
 tag scanning and balanced-parenthesis handling for bare GFM URLs.
+The current emphasis pass independently collects delimiter runs, applies
+flanking and run-of-three checks, and emits paired tags while preserving unused
+markers. This implementation remains a modified fork and does not include the
+upstream parser distribution.
